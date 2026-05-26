@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -200,12 +201,38 @@ func (dm *DownloadManager) Poll() {
 			}
 		}
 
-		if existing == nil {
+		if existing == nil && btName != "" {
 			for _, d := range dm.items {
-				if btName != "" && d.Name != "" && (d.Name == btName || strings.Contains(d.Name, btName) || strings.Contains(btName, d.Name)) {
+				if d.Name != "" && nameOverlap(d.Name, btName) {
 					existing = d
 					break
 				}
+			}
+		}
+
+		if existing == nil && total > 0 && len(ts.Files) > 0 {
+			dirName := filepath.Base(filepath.Dir(ts.Files[0].Path))
+			for _, d := range dm.items {
+				if (d.Status == StatusMeta || d.Status == StatusWaiting) && d.Name != "" {
+					if nameOverlap(d.Name, dirName) {
+						existing = d
+						break
+					}
+				}
+			}
+		}
+
+		if existing == nil && total > 0 {
+			pending := 0
+			var lastPending *DownloadItem
+			for _, d := range dm.items {
+				if d.Status == StatusMeta || d.Status == StatusWaiting {
+					pending++
+					lastPending = d
+				}
+			}
+			if pending == 1 && lastPending != nil {
+				existing = lastPending
 			}
 		}
 
@@ -427,6 +454,36 @@ func (m *Model) downloadsView() string {
 	parts = append(parts, mutedStyle.Render("p: pause  r: resume  c: cancel  d: remove  esc: back"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func nameOverlap(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	aLower := strings.ToLower(a)
+	bLower := strings.ToLower(b)
+	if strings.Contains(aLower, bLower) || strings.Contains(bLower, aLower) {
+		return true
+	}
+	aWords := strings.FieldsFunc(aLower, func(r rune) bool {
+		return r == ' ' || r == '-' || r == '_' || r == '.' || r == '[' || r == ']' || r == '(' || r == ')'
+	})
+	bWords := strings.FieldsFunc(bLower, func(r rune) bool {
+		return r == ' ' || r == '-' || r == '_' || r == '.' || r == '[' || r == ']' || r == '(' || r == ')'
+	})
+	if len(aWords) >= 2 && len(bWords) >= 2 {
+		match := 0
+		for _, aw := range aWords {
+			for _, bw := range bWords {
+				if aw == bw && len(aw) > 2 {
+					match++
+					break
+				}
+			}
+		}
+		return match >= 2
+	}
+	return false
 }
 
 func RequiresAria2() bool {
