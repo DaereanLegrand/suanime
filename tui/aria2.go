@@ -19,7 +19,7 @@ type aria2Client struct {
 type rpcRequest struct {
 	JSONRPC string        `json:"jsonrpc"`
 	Method  string        `json:"method"`
-	Params  []interface{} `json:"params"`
+	Params  []interface{} `json:"params,omitempty"`
 	ID      int           `json:"id"`
 }
 
