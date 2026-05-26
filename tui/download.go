@@ -178,7 +178,6 @@ func (dm *DownloadManager) Poll() {
 
 	seen := map[string]bool{}
 	var updated []*DownloadItem
-	btNames := map[string]*DownloadItem{}
 
 	for _, ts := range all {
 		seen[ts.GID] = true
@@ -186,55 +185,18 @@ func (dm *DownloadManager) Poll() {
 		total := parseLength(ts.TotalLength)
 		speed := parseLength(ts.DownloadSpeed)
 		pct := progressPct(completed, total)
-
 		numFiles := len(ts.Files)
+
 		btName := ""
 		if ts.Bittorrent != nil && ts.Bittorrent.Info.Name != "" {
 			btName = ts.Bittorrent.Info.Name
 		}
-
-		var existing *DownloadItem
-		for _, d := range dm.items {
-			if d.GID == ts.GID {
-				existing = d
-				break
-			}
+		dirName := ""
+		if numFiles > 0 && ts.Files[0].Path != "" {
+			dirName = filepath.Base(filepath.Dir(ts.Files[0].Path))
 		}
 
-		if existing == nil && btName != "" {
-			for _, d := range dm.items {
-				if d.Name != "" && nameOverlap(d.Name, btName) {
-					existing = d
-					break
-				}
-			}
-		}
-
-		if existing == nil && total > 0 && len(ts.Files) > 0 {
-			dirName := filepath.Base(filepath.Dir(ts.Files[0].Path))
-			for _, d := range dm.items {
-				if (d.Status == StatusMeta || d.Status == StatusWaiting) && d.Name != "" {
-					if nameOverlap(d.Name, dirName) {
-						existing = d
-						break
-					}
-				}
-			}
-		}
-
-		if existing == nil && total > 0 {
-			pending := 0
-			var lastPending *DownloadItem
-			for _, d := range dm.items {
-				if d.Status == StatusMeta || d.Status == StatusWaiting {
-					pending++
-					lastPending = d
-				}
-			}
-			if pending == 1 && lastPending != nil {
-				existing = lastPending
-			}
-		}
+		existing := dm.findMatching(ts.GID, btName, dirName, total)
 
 		if existing != nil {
 			existing.GID = ts.GID
@@ -246,71 +208,21 @@ func (dm *DownloadManager) Poll() {
 			existing.Completed = completed
 			existing.NumFiles = numFiles
 			existing.Progress = pct
-			if numFiles > 0 && ts.Files[0].Path != "" {
+			if dirName != "" {
 				existing.Files = ts.Files[0].Path
 			}
-
-			switch ts.Status {
-			case "active":
-				if total == 0 {
-					existing.Status = StatusMeta
-				} else {
-					existing.Status = StatusRunning
-				}
-			case "paused":
-				existing.Status = StatusPaused
-			case "waiting":
-				existing.Status = StatusWaiting
-			case "complete":
-				if completed > 0 && total > 0 && completed >= total {
-					if total > 100*1024 || existing.TotalSize > 100*1024 {
-						existing.Status = StatusCompleted
-						existing.Progress = 100
-					}
-				} else if completed == 0 && total == 0 {
-					existing.Status = StatusFailed
-					existing.Err = "no data (no seeders?)"
-				}
-			case "error":
-				existing.Status = StatusFailed
-				existing.Err = ts.ErrorMessage
-			case "removed":
-			}
+			existing.Status = dm.mapStatus(ts.Status, total, completed, existing)
 			updated = append(updated, existing)
-			if btName != "" {
-				btNames[btName] = existing
-			}
 		} else {
 			name := btName
 			if name == "" {
 				name = ts.GID
 			}
-			status := StatusMeta
-			switch ts.Status {
-			case "active":
-				if total == 0 {
-					status = StatusMeta
-				} else {
-					status = StatusRunning
-				}
-			case "paused":
-				status = StatusPaused
-			case "waiting":
-				status = StatusWaiting
-			case "complete":
-				if completed > 0 && total > 0 && completed >= total && total > 100*1024 {
-					status = StatusCompleted
-				} else if total <= 100*1024 {
-					status = StatusMeta
-				}
-			case "error":
-				status = StatusFailed
-			}
 			item := &DownloadItem{
 				GID:       ts.GID,
 				Name:      name,
 				Started:   time.Now(),
-				Status:    status,
+				Status:    dm.mapStatus(ts.Status, total, completed, nil),
 				Progress:  pct,
 				Speed:     speed,
 				TotalSize: total,
@@ -318,37 +230,98 @@ func (dm *DownloadManager) Poll() {
 				NumFiles:  numFiles,
 				Err:       ts.ErrorMessage,
 			}
-			if numFiles > 0 && ts.Files[0].Path != "" {
+			if dirName != "" {
 				item.Files = ts.Files[0].Path
 			}
 			updated = append(updated, item)
-			if btName != "" {
-				btNames[btName] = item
-			}
 		}
 	}
 
 	for _, d := range dm.items {
-		if !seen[d.GID] {
-			if d.Status == StatusMeta || d.Status == StatusRunning || d.Status == StatusWaiting || d.Status == StatusPaused {
-				updated = append(updated, d)
-			}
+		if !seen[d.GID] && d.Status != StatusCompleted {
+			updated = append(updated, d)
 		}
 	}
 
-	deduped := make([]*DownloadItem, 0, len(updated))
 	gids := map[string]bool{}
-	names := map[string]bool{}
+	deduped := updated[:0]
 	for _, d := range updated {
 		if d.GID != "" && !gids[d.GID] {
 			gids[d.GID] = true
-			names[d.Name] = true
 			deduped = append(deduped, d)
 		}
 	}
 	dm.items = deduped
-	_ = btNames
-	_ = names
+}
+
+func (dm *DownloadManager) findMatching(tsGID, btName, dirName string, total int64) *DownloadItem {
+	for _, d := range dm.items {
+		if d.GID == tsGID {
+			return d
+		}
+	}
+	if btName != "" {
+		for _, d := range dm.items {
+			if d.Name != "" && nameOverlap(d.Name, btName) {
+				return d
+			}
+		}
+	}
+	if dirName != "" && total > 0 {
+		for _, d := range dm.items {
+			if (d.Status == StatusMeta || d.Status == StatusWaiting) && d.Name != "" {
+				if nameOverlap(d.Name, dirName) {
+					return d
+				}
+			}
+		}
+	}
+	if total > 100*1024 {
+		pending := 0
+		var last *DownloadItem
+		for _, d := range dm.items {
+			if d.Status == StatusMeta || d.Status == StatusWaiting {
+				pending++
+				last = d
+			}
+		}
+		if pending == 1 && last != nil {
+			return last
+		}
+	}
+	return nil
+}
+
+func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, existing *DownloadItem) string {
+	prevTotal := int64(0)
+	if existing != nil {
+		prevTotal = existing.TotalSize
+	}
+	switch ariaStatus {
+	case "active":
+		if total == 0 {
+			return StatusMeta
+		}
+		return StatusRunning
+	case "paused":
+		return StatusPaused
+	case "waiting":
+		return StatusWaiting
+	case "complete":
+		if completed > 0 && total > 0 && completed >= total {
+			if total > 100*1024 || prevTotal > 100*1024 {
+				return StatusCompleted
+			}
+			return StatusMeta
+		}
+		if completed > 0 {
+			return StatusRunning
+		}
+		return StatusFailed
+	case "error":
+		return StatusFailed
+	}
+	return StatusMeta
 }
 
 func (dm *DownloadManager) GetItems() []*DownloadItem {
