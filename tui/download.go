@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 const (
 	StatusRunning   = "running"
+	StatusMeta      = "metadata"
 	StatusPaused    = "paused"
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"
@@ -21,17 +23,18 @@ const (
 )
 
 type DownloadItem struct {
-	GID         string
-	Name        string
-	Magnet      string
-	Started     time.Time
-	Status      string
-	Progress    float64
-	Speed       int64
-	TotalSize   int64
-	Completed   int64
-	Err         string
-	Files       string
+	GID       string
+	Name      string
+	Magnet    string
+	Started   time.Time
+	Status    string
+	Progress  float64
+	Speed     int64
+	TotalSize int64
+	Completed int64
+	Err       string
+	Files     string
+	NumFiles  int
 }
 
 type DownloadManager struct {
@@ -51,6 +54,11 @@ func NewDownloadManager(cfg Config) *DownloadManager {
 }
 
 func (dm *DownloadManager) StartDaemon() error {
+	os.MkdirAll(dm.config.DownloadDir, 0755)
+	sessionFile := dm.sessionFile()
+	os.Remove(sessionFile)
+	os.Remove(sessionFile + "_old")
+
 	port := fmt.Sprintf("%d", dm.config.Aria2RPCPort)
 	args := []string{
 		"--enable-rpc",
@@ -60,9 +68,11 @@ func (dm *DownloadManager) StartDaemon() error {
 		"--seed-time=0",
 		"--summary-interval=0",
 		"--console-log-level=error",
-		"--save-session=" + dm.sessionFile(),
+		"--file-allocation=none",
+		"--save-session=" + sessionFile,
 		"--save-session-interval=10",
 		"--dir=" + dm.config.DownloadDir,
+		"--bt-save-metadata=true",
 	}
 	if dm.config.Aria2RPCSecret != "" {
 		args = append(args, "--rpc-secret="+dm.config.Aria2RPCSecret)
@@ -100,7 +110,7 @@ func (dm *DownloadManager) AddDownload(name, magnet string) error {
 		Name:    name,
 		Magnet:  magnet,
 		Started: time.Now(),
-		Status:  StatusRunning,
+		Status:  StatusMeta,
 	})
 	dm.mu.Unlock()
 	return nil
@@ -153,13 +163,10 @@ func (dm *DownloadManager) Poll() {
 		speed := parseLength(ts.DownloadSpeed)
 		pct := progressPct(completed, total)
 
-		name := ts.GID
+		numFiles := len(ts.Files)
+		btName := ""
 		if ts.Bittorrent != nil && ts.Bittorrent.Info.Name != "" {
-			name = ts.Bittorrent.Info.Name
-		}
-		files := ""
-		if len(ts.Files) > 0 {
-			files = ts.Files[0].Path
+			btName = ts.Bittorrent.Info.Name
 		}
 
 		var existing *DownloadItem
@@ -171,23 +178,37 @@ func (dm *DownloadManager) Poll() {
 		}
 
 		if existing != nil {
-			if name != existing.GID {
-				existing.Name = name
+			if btName != "" {
+				existing.Name = btName
 			}
-			existing.Progress = pct
 			existing.Speed = speed
 			existing.TotalSize = total
 			existing.Completed = completed
-			existing.Files = files
+			existing.NumFiles = numFiles
+			existing.Progress = pct
+			if numFiles > 0 && ts.Files[0].Path != "" {
+				existing.Files = ts.Files[0].Path
+			}
+
 			switch ts.Status {
 			case "active":
-				existing.Status = StatusRunning
+				if total == 0 {
+					existing.Status = StatusMeta
+				} else {
+					existing.Status = StatusRunning
+				}
 			case "paused":
 				existing.Status = StatusPaused
 			case "waiting":
 				existing.Status = StatusWaiting
 			case "complete":
-				existing.Status = StatusCompleted
+				if total > 0 && completed >= total {
+					existing.Status = StatusCompleted
+					existing.Progress = 100
+				} else if total == 0 && completed == 0 {
+					existing.Status = StatusFailed
+					existing.Err = "no data (no seeders?)"
+				}
 			case "error":
 				existing.Status = StatusFailed
 				existing.Err = ts.ErrorMessage
@@ -195,18 +216,32 @@ func (dm *DownloadManager) Poll() {
 			}
 			updated = append(updated, existing)
 		} else {
-			status := StatusRunning
+			name := btName
+			if name == "" {
+				name = ts.GID
+			}
+			status := StatusMeta
 			switch ts.Status {
+			case "active":
+				if total == 0 {
+					status = StatusMeta
+				} else {
+					status = StatusRunning
+				}
 			case "paused":
 				status = StatusPaused
 			case "waiting":
 				status = StatusWaiting
 			case "complete":
-				status = StatusCompleted
+				if total > 0 && completed >= total {
+					status = StatusCompleted
+				} else {
+					status = StatusFailed
+				}
 			case "error":
 				status = StatusFailed
 			}
-			updated = append(updated, &DownloadItem{
+			item := &DownloadItem{
 				GID:       ts.GID,
 				Name:      name,
 				Started:   time.Now(),
@@ -215,9 +250,13 @@ func (dm *DownloadManager) Poll() {
 				Speed:     speed,
 				TotalSize: total,
 				Completed: completed,
-				Files:     files,
+				NumFiles:  numFiles,
 				Err:       ts.ErrorMessage,
-			})
+			}
+			if numFiles > 0 && ts.Files[0].Path != "" {
+				item.Files = ts.Files[0].Path
+			}
+			updated = append(updated, item)
 		}
 	}
 
@@ -253,56 +292,74 @@ func (m *Model) downloadsView() string {
 	for i, d := range items {
 		cursor := " "
 		if i == m.downCursor {
-			cursor = ">"
+			cursor = accentStyle.Render(">")
 		}
 
 		name := Truncate(d.Name, max(30, m.width-10))
+		barWidth := min(30, m.width-40)
+
 		var statusLine string
 		switch d.Status {
+		case StatusMeta:
+			statusLine = fmt.Sprintf("%s  %s",
+				warnStyle.Render(strings.Repeat("░", barWidth)),
+				loadingStyle.Render("fetching metadata..."),
+			)
 		case StatusRunning:
-			bar := progressBar(d.Progress, 30)
-			speedStr := providers.FormatSize(d.Speed) + "/s"
+			bar := progressBar(d.Progress, barWidth)
+			speedStr := ""
+			if d.Speed > 0 {
+				speedStr = providers.FormatSize(d.Speed) + "/s"
+			}
 			eta := ""
 			if d.Speed > 0 && d.TotalSize > d.Completed {
 				remaining := d.TotalSize - d.Completed
 				etaSec := remaining / d.Speed
 				eta = fmt.Sprintf("ETA %s", time.Duration(etaSec)*time.Second)
 			}
-			statusLine = fmt.Sprintf("%s %s  %5.1f%%  %s  %s",
+			done := providers.FormatSize(d.Completed)
+			total := providers.FormatSize(d.TotalSize)
+			statusLine = fmt.Sprintf("%s  %s/%s  %s  %s  %s",
 				goodStyle.Render(bar),
+				goodStyle.Render(done),
+				subtleStyle.Render(total),
 				subtleStyle.Render(speedStr),
-				d.Progress,
 				subtleStyle.Render(eta),
-				accentStyle.Render("active"),
+				accentStyle.Render(fmt.Sprintf("%.0f%%", d.Progress)),
 			)
 		case StatusPaused:
-			bar := progressBar(d.Progress, 30)
-			statusLine = fmt.Sprintf("%s  %5.1f%%  %s",
+			bar := progressBar(d.Progress, barWidth)
+			statusLine = fmt.Sprintf("%s  %.0f%%  %s",
 				warnStyle.Render(bar),
 				d.Progress,
 				warnStyle.Render("paused"),
 			)
 		case StatusWaiting:
 			statusLine = fmt.Sprintf("%s  %s",
-				subtleStyle.Render(strings.Repeat(" ", 30)),
-				warnStyle.Render("waiting"),
+				subtleStyle.Render(strings.Repeat("░", barWidth)),
+				warnStyle.Render("waiting in queue"),
 			)
 		case StatusCompleted:
-			bar := progressBar(100, 30)
+			bar := progressBar(100, barWidth)
+			size := providers.FormatSize(d.TotalSize)
 			statusLine = fmt.Sprintf("%s  %s  %s",
 				goodStyle.Render(bar),
-				goodStyle.Render("100%"),
+				goodStyle.Render(size),
 				goodStyle.Render("completed"),
 			)
 		case StatusFailed:
-			bar := progressBar(d.Progress, 30)
+			bar := progressBar(d.Progress, barWidth)
+			err := d.Err
+			if err == "" {
+				err = "unknown error"
+			}
 			statusLine = fmt.Sprintf("%s  %s",
 				badStyle.Render(bar),
-				badStyle.Render("failed: "+d.Err),
+				badStyle.Render("failed: "+Truncate(err, 40)),
 			)
 		}
 
-		entry := fmt.Sprintf("%s  %s\n    %s", cursor, name, statusLine)
+		entry := fmt.Sprintf("%s %s\n  %s", cursor, name, statusLine)
 
 		if i == m.downCursor {
 			parts = append(parts, selectedStyle.Render(entry))
@@ -312,7 +369,7 @@ func (m *Model) downloadsView() string {
 	}
 
 	parts = append(parts, "")
-	parts = append(parts, subtleStyle.Render("p: pause  r: resume  c: cancel  d: remove  esc: back"))
+	parts = append(parts, mutedStyle.Render("p: pause  r: resume  c: cancel  d: remove  esc: back"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
