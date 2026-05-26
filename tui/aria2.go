@@ -128,6 +128,11 @@ func (c *aria2Client) Remove(gid string) error {
 	return err
 }
 
+func (c *aria2Client) ForceRemove(gid string) error {
+	_, err := c.call("aria2.forceRemove", gid)
+	return err
+}
+
 func (c *aria2Client) RemoveResult(gid string) error {
 	_, err := c.call("aria2.removeDownloadResult", gid)
 	return err

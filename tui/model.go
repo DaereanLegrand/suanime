@@ -222,31 +222,45 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 	case "p":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
 			gid := items[m.downCursor].GID
-			m.dlManager.Pause(gid)
-			m.status = "paused"
+			if err := m.dlManager.Pause(gid); err != nil {
+				m.status = fmt.Sprintf("pause err: %s", err)
+			} else {
+				m.status = "paused"
+			}
 		}
 	case "r":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
 			gid := items[m.downCursor].GID
-			m.dlManager.Resume(gid)
-			m.status = "resumed"
+			if err := m.dlManager.Resume(gid); err != nil {
+				m.status = fmt.Sprintf("resume err: %s", err)
+			} else {
+				m.status = "resumed"
+			}
 		}
 	case "c":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
 			gid := items[m.downCursor].GID
-			m.dlManager.Cancel(gid)
-			m.status = "cancelled"
-			if m.downCursor >= len(items)-1 {
-				m.downCursor = max(0, len(items)-2)
+			if err := m.dlManager.Cancel(gid); err != nil {
+				m.status = fmt.Sprintf("cancel err: %s", err)
+			} else {
+				m.status = "cancelled"
+				items = m.dlManager.GetItems()
+				if m.downCursor >= len(items) {
+					m.downCursor = max(0, len(items)-1)
+				}
 			}
 		}
 	case "d":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
 			gid := items[m.downCursor].GID
-			m.dlManager.Cancel(gid)
-			m.status = "removed"
-			if m.downCursor >= len(items)-1 {
-				m.downCursor = max(0, len(items)-2)
+			if err := m.dlManager.Cancel(gid); err != nil {
+				m.status = fmt.Sprintf("remove err: %s", err)
+			} else {
+				m.status = "removed"
+				items = m.dlManager.GetItems()
+				if m.downCursor >= len(items) {
+					m.downCursor = max(0, len(items)-1)
+				}
 			}
 		}
 	}

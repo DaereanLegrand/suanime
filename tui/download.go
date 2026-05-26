@@ -54,6 +54,8 @@ func NewDownloadManager(cfg Config) *DownloadManager {
 }
 
 func (dm *DownloadManager) StartDaemon() error {
+	dm.killExistingAria2()
+
 	os.MkdirAll(dm.config.DownloadDir, 0755)
 	sessionFile := dm.sessionFile()
 	os.Remove(sessionFile)
@@ -86,6 +88,12 @@ func (dm *DownloadManager) StartDaemon() error {
 	dm.daemon = cmd
 	time.Sleep(500 * time.Millisecond)
 	return nil
+}
+
+func (dm *DownloadManager) killExistingAria2() {
+	c := newAria2Client(dm.config.Aria2RPCPort, dm.config.Aria2RPCSecret)
+	c.call("aria2.shutdown", []interface{}{})
+	time.Sleep(200 * time.Millisecond)
 }
 
 func (dm *DownloadManager) sessionFile() string {
@@ -124,8 +132,23 @@ func (dm *DownloadManager) Resume(gid string) error {
 	return dm.aria2.Unpause(gid)
 }
 
+func (dm *DownloadManager) FindGID(gid string) *DownloadItem {
+	dm.mu.Lock()
+	defer dm.mu.Unlock()
+	for _, d := range dm.items {
+		if d.GID == gid {
+			return d
+		}
+	}
+	return nil
+}
+
 func (dm *DownloadManager) Cancel(gid string) error {
-	dm.aria2.Remove(gid)
+	if err := dm.aria2.Remove(gid); err != nil {
+		if err2 := dm.aria2.ForceRemove(gid); err2 != nil {
+			return fmt.Errorf("remove: %w / force: %w", err, err2)
+		}
+	}
 	dm.aria2.RemoveResult(gid)
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
@@ -261,12 +284,20 @@ func (dm *DownloadManager) Poll() {
 	}
 
 	for _, d := range dm.items {
-		if !seen[d.GID] && d.Status == StatusCompleted {
+		if !seen[d.GID] {
 			updated = append(updated, d)
 		}
 	}
 
-	dm.items = updated
+	deduped := make([]*DownloadItem, 0, len(updated))
+	gids := map[string]bool{}
+	for _, d := range updated {
+		if !gids[d.GID] {
+			gids[d.GID] = true
+			deduped = append(deduped, d)
+		}
+	}
+	dm.items = deduped
 }
 
 func (dm *DownloadManager) GetItems() []*DownloadItem {
