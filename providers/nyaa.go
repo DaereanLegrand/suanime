@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -145,6 +146,10 @@ func parseNyaaRSS(data []byte, providerName string) ([]*AnimeTorrent, error) {
 			}
 		}
 	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Seeders > results[j].Seeders
+	})
 
 	return results, nil
 }

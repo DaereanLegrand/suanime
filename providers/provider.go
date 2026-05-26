@@ -70,20 +70,23 @@ func SearchAll(ctx context.Context, query string) []*AnimeTorrent {
 }
 
 var (
-	reEpisode    = regexp.MustCompile(`(?i)[-_\s.](\d{1,4})(?:v\d+)?(?:[._\s-]|\[)`)
-	reBatch      = regexp.MustCompile(`(?i)[-_\s.](?:0[1-9])\s*[-~]\s*(?:[1-9]\d{1,3})(?:[._\s-]|\[)`)
-	reRes        = regexp.MustCompile(`(?i)(\d{3,4}p)`)
-	reInfoHash   = regexp.MustCompile(`(?i)\b([0-9a-fA-F]{40})\b`)
+	reEpDash      = regexp.MustCompile(`(?i)[-_\s.](\d{1,4})(?:v\d+)?(?:\b|[._\s\-\]\[\(])`)
+	reEpSxE       = regexp.MustCompile(`(?i)(?:[sS]\d{1,4})?[eE](\d{1,4})(?:v\d+)?(?:\b|[._\s\-\]\[\(])`)
+	reBatch       = regexp.MustCompile(`(?i)[-_\s.](?:0[1-9])\s*[-~]\s*(?:[1-9]\d{1,3})\b`)
+	reRes         = regexp.MustCompile(`(?i)(\d{3,4}p)`)
+	reInfoHash    = regexp.MustCompile(`(?i)\b([0-9a-fA-F]{40})\b`)
 	reB32InfoHash = regexp.MustCompile(`(?i)btih:([A-Z2-7]{32})`)
 	reMagnetLink  = regexp.MustCompile(`(?i)(magnet:\?[^\s"'<>]+)`)
 	reBatchKwd    = regexp.MustCompile(`(?i)\b(batch|complete|season)\b`)
 )
 
 func ParseEpisode(name string) int {
-	m := reEpisode.FindStringSubmatch(name)
-	if m != nil {
-		n, err := strconv.Atoi(m[1])
-		if err == nil {
+	if m := reEpSxE.FindStringSubmatch(name); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	if m := reEpDash.FindStringSubmatch(name); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 && n < 2000 {
 			return n
 		}
 	}

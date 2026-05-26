@@ -74,7 +74,6 @@ func (dm *DownloadManager) StartDaemon() error {
 		"--save-session=" + sessionFile,
 		"--save-session-interval=10",
 		"--dir=" + dm.config.DownloadDir,
-		"--bt-save-metadata=true",
 	}
 	if dm.config.Aria2RPCSecret != "" {
 		args = append(args, "--rpc-secret="+dm.config.Aria2RPCSecret)
@@ -178,6 +177,7 @@ func (dm *DownloadManager) Poll() {
 
 	seen := map[string]bool{}
 	var updated []*DownloadItem
+	btNames := map[string]*DownloadItem{}
 
 	for _, ts := range all {
 		seen[ts.GID] = true
@@ -200,7 +200,17 @@ func (dm *DownloadManager) Poll() {
 			}
 		}
 
+		if existing == nil {
+			for _, d := range dm.items {
+				if btName != "" && d.Name != "" && (d.Name == btName || strings.Contains(d.Name, btName) || strings.Contains(btName, d.Name)) {
+					existing = d
+					break
+				}
+			}
+		}
+
 		if existing != nil {
+			existing.GID = ts.GID
 			if btName != "" {
 				existing.Name = btName
 			}
@@ -225,10 +235,12 @@ func (dm *DownloadManager) Poll() {
 			case "waiting":
 				existing.Status = StatusWaiting
 			case "complete":
-				if total > 0 && completed >= total {
-					existing.Status = StatusCompleted
-					existing.Progress = 100
-				} else if total == 0 && completed == 0 {
+				if completed > 0 && total > 0 && completed >= total {
+					if total > 100*1024 || existing.TotalSize > 100*1024 {
+						existing.Status = StatusCompleted
+						existing.Progress = 100
+					}
+				} else if completed == 0 && total == 0 {
 					existing.Status = StatusFailed
 					existing.Err = "no data (no seeders?)"
 				}
@@ -238,6 +250,9 @@ func (dm *DownloadManager) Poll() {
 			case "removed":
 			}
 			updated = append(updated, existing)
+			if btName != "" {
+				btNames[btName] = existing
+			}
 		} else {
 			name := btName
 			if name == "" {
@@ -256,10 +271,10 @@ func (dm *DownloadManager) Poll() {
 			case "waiting":
 				status = StatusWaiting
 			case "complete":
-				if total > 0 && completed >= total {
+				if completed > 0 && total > 0 && completed >= total && total > 100*1024 {
 					status = StatusCompleted
-				} else {
-					status = StatusFailed
+				} else if total <= 100*1024 {
+					status = StatusMeta
 				}
 			case "error":
 				status = StatusFailed
@@ -280,24 +295,33 @@ func (dm *DownloadManager) Poll() {
 				item.Files = ts.Files[0].Path
 			}
 			updated = append(updated, item)
+			if btName != "" {
+				btNames[btName] = item
+			}
 		}
 	}
 
 	for _, d := range dm.items {
 		if !seen[d.GID] {
-			updated = append(updated, d)
+			if d.Status == StatusMeta || d.Status == StatusRunning || d.Status == StatusWaiting || d.Status == StatusPaused {
+				updated = append(updated, d)
+			}
 		}
 	}
 
 	deduped := make([]*DownloadItem, 0, len(updated))
 	gids := map[string]bool{}
+	names := map[string]bool{}
 	for _, d := range updated {
-		if !gids[d.GID] {
+		if d.GID != "" && !gids[d.GID] {
 			gids[d.GID] = true
+			names[d.Name] = true
 			deduped = append(deduped, d)
 		}
 	}
 	dm.items = deduped
+	_ = btNames
+	_ = names
 }
 
 func (dm *DownloadManager) GetItems() []*DownloadItem {
