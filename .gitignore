@@ -1,0 +1,4 @@
+/suanime
+*.aria2
+.suanime-aria2.session
+*.session
