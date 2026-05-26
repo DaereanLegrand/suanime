@@ -115,6 +115,26 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.dlManager.Poll()
+		if m.dlManager.RPCErr != "" {
+			m.status = m.dlManager.RPCErr
+		} else {
+			items := m.dlManager.GetItems()
+			dn := len(items)
+			dr, dmet, dw, dp, dc, df := 0, 0, 0, 0, 0, 0
+			for _, d := range items {
+				switch d.Status {
+				case StatusRunning: dr++
+				case StatusMeta: dmet++
+				case StatusWaiting: dw++
+				case StatusPaused: dp++
+				case StatusCompleted: dc++
+				case StatusFailed: df++
+				}
+			}
+			if dn > 0 {
+				m.status = fmt.Sprintf("%d dls: run=%d meta=%d wait=%d comp=%d fail=%d", dn, dr, dmet, dw, dc, df)
+			}
+		}
 		cmds = append(cmds, tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }))
 	}
 

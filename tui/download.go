@@ -44,6 +44,7 @@ type DownloadManager struct {
 	mu     sync.Mutex
 	config Config
 	daemon *exec.Cmd
+	RPCErr string
 }
 
 func NewDownloadManager(cfg Config) *DownloadManager {
@@ -169,9 +170,14 @@ func (dm *DownloadManager) Poll() {
 		return
 	}
 
-	active, _ := dm.aria2.TellActive()
-	waited, _ := dm.aria2.TellWaiting(0, 100)
-	stopped, _ := dm.aria2.TellStopped(0, 100)
+	active, errA := dm.aria2.TellActive()
+	waited, errW := dm.aria2.TellWaiting(0, 100)
+	stopped, errS := dm.aria2.TellStopped(0, 100)
+	if errA != nil || errW != nil || errS != nil {
+		dm.RPCErr = fmt.Sprintf("rpc: %v %v %v", errA, errW, errS)
+	} else {
+		dm.RPCErr = ""
+	}
 
 	all := append(active, waited...)
 	all = append(all, stopped...)
