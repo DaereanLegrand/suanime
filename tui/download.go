@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -181,6 +182,9 @@ func (dm *DownloadManager) Poll() {
 
 	all := append(active, waited...)
 	all = append(all, stopped...)
+	sort.Slice(all, func(i, j int) bool {
+		return parseLength(all[i].TotalLength) > parseLength(all[j].TotalLength)
+	})
 
 	seen := map[string]bool{}
 	var updated []*DownloadItem
@@ -300,8 +304,10 @@ func (dm *DownloadManager) findMatching(tsGID, btName, dirName string, total int
 
 func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, existing *DownloadItem) string {
 	prevTotal := int64(0)
+	prevStatus := ""
 	if existing != nil {
 		prevTotal = existing.TotalSize
+		prevStatus = existing.Status
 	}
 	switch ariaStatus {
 	case "active":
@@ -317,6 +323,9 @@ func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, 
 		if completed > 0 && total > 0 && completed >= total {
 			if total > 100*1024 || prevTotal > 100*1024 {
 				return StatusCompleted
+			}
+			if prevStatus == StatusRunning || prevStatus == StatusCompleted {
+				return prevStatus
 			}
 			return StatusMeta
 		}
