@@ -16,7 +16,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-const version = "1.0.0"
+var (
+	version = "1.0.0"
+	commit  = "dev"
+)
 
 func main() {
 	args := os.Args[1:]
@@ -34,7 +37,7 @@ func main() {
 	case "get":
 		runGet(args[1:])
 	case "version", "--version", "-v":
-		fmt.Println("suanime", version)
+		fmt.Printf("suanime %s (%s)\n", version, commit)
 	case "--help", "-h", "help":
 		printHelp()
 	default:
@@ -45,7 +48,8 @@ func main() {
 }
 
 func printHelp() {
-	fmt.Println(`suanime - anime torrent search & download
+	fmt.Printf("suanime %s (%s) - anime torrent search & download\n\n", version, commit)
+	fmt.Println(`
 
 Usage:
   suanime                  Launch TUI

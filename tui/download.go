@@ -22,6 +22,7 @@ const (
 	StatusCompleted = "completed"
 	StatusFailed    = "failed"
 	StatusWaiting   = "waiting"
+	StatusSeeding   = "seeding"
 )
 
 type DownloadItem struct {
@@ -70,7 +71,7 @@ func (dm *DownloadManager) StartDaemon() error {
 		"--rpc-listen-port=" + port,
 		"--rpc-allow-origin-all",
 		"--rpc-listen-all=false",
-		"--seed-time=0",
+		"--seed-ratio=2.0",
 		"--summary-interval=0",
 		"--console-log-level=error",
 		"--file-allocation=none",
@@ -146,11 +147,8 @@ func (dm *DownloadManager) FindGID(gid string) *DownloadItem {
 }
 
 func (dm *DownloadManager) Cancel(gid string) error {
-	if err := dm.aria2.Remove(gid); err != nil {
-		if err2 := dm.aria2.ForceRemove(gid); err2 != nil {
-			return fmt.Errorf("remove: %w / force: %w", err, err2)
-		}
-	}
+	dm.aria2.Remove(gid)
+	dm.aria2.ForceRemove(gid)
 	dm.aria2.RemoveResult(gid)
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
@@ -223,7 +221,7 @@ func (dm *DownloadManager) Poll() {
 			}
 			existing.Status = dm.mapStatus(ts.Status, total, completed, existing)
 			updated = append(updated, existing)
-		} else {
+		} else if !(ts.Status == "complete" && total <= 100*1024 && completed <= 100*1024) {
 			name := btName
 			if name == "" {
 				name = ts.GID
@@ -314,6 +312,9 @@ func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, 
 		if total == 0 {
 			return StatusMeta
 		}
+		if completed >= total && total > 0 {
+			return StatusSeeding
+		}
 		return StatusRunning
 	case "paused":
 		return StatusPaused
@@ -324,7 +325,7 @@ func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, 
 			if total > 100*1024 || prevTotal > 100*1024 {
 				return StatusCompleted
 			}
-			if prevStatus == StatusRunning || prevStatus == StatusCompleted {
+			if prevStatus == StatusRunning || prevStatus == StatusCompleted || prevStatus == StatusSeeding {
 				return prevStatus
 			}
 			return StatusMeta
@@ -416,6 +417,15 @@ func (m *Model) downloadsView() string {
 				goodStyle.Render(bar),
 				goodStyle.Render(size),
 				goodStyle.Render("completed"),
+			)
+		case StatusSeeding:
+			bar := progressBar(100, barWidth)
+			size := providers.FormatSize(d.TotalSize)
+			statusLine = fmt.Sprintf("%s  %s  %s  %s/s",
+				goodStyle.Render(bar),
+				goodStyle.Render(size),
+				accentStyle.Render("seeding (ratio 2.0)"),
+				subtleStyle.Render(providers.FormatSize(d.Speed)),
 			)
 		case StatusFailed:
 			bar := progressBar(d.Progress, barWidth)
