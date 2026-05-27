@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -40,6 +41,15 @@ type DownloadItem struct {
 	Err       string
 	Files     string
 	NumFiles  int
+	Seeders   int
+	Leechers  int
+}
+
+type magnetEntry struct {
+	Name     string `json:"name"`
+	Magnet   string `json:"magnet"`
+	Seeders  int    `json:"seeders"`
+	Leechers int    `json:"leechers"`
 }
 
 type DownloadManager struct {
@@ -117,26 +127,81 @@ func (dm *DownloadManager) sessionFile() string {
 	return dm.config.DownloadDir + "/.suanime-aria2.session"
 }
 
+func (dm *DownloadManager) magnetsFile() string {
+	return dm.config.DownloadDir + "/.suanime-magnets.json"
+}
+
+func (dm *DownloadManager) saveMagnets() {
+	var entries []magnetEntry
+	for _, d := range dm.items {
+		if d.Magnet != "" {
+			entries = append(entries, magnetEntry{
+				Name:     d.Name,
+				Magnet:   d.Magnet,
+				Seeders:  d.Seeders,
+				Leechers: d.Leechers,
+			})
+		}
+	}
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return
+	}
+	os.WriteFile(dm.magnetsFile(), data, 0644)
+}
+
+func (dm *DownloadManager) loadMagnets() []magnetEntry {
+	data, err := os.ReadFile(dm.magnetsFile())
+	if err != nil {
+		return nil
+	}
+	var entries []magnetEntry
+	json.Unmarshal(data, &entries)
+	return entries
+}
+
+func extractMagnetInfoHash(magnet string) string {
+	idx := strings.Index(magnet, "urn:btih:")
+	if idx < 0 {
+		return ""
+	}
+	start := idx + len("urn:btih:")
+	end := strings.IndexByte(magnet[start:], '&')
+	if end < 0 {
+		end = len(magnet) - start
+	}
+	return strings.ToLower(magnet[start : start+end])
+}
+
 func (dm *DownloadManager) StopDaemon() {
 	if dm.daemon != nil && dm.daemon.Process != nil {
 		dm.aria2.call("aria2.shutdown", []interface{}{})
-		dm.daemon.Process.Kill()
+		done := make(chan error, 1)
+		go func() { done <- dm.daemon.Wait() }()
+		select {
+		case <-done:
+		case <-time.After(1 * time.Second):
+			dm.daemon.Process.Kill()
+		}
 	}
 }
 
-func (dm *DownloadManager) AddDownload(name, magnet string) error {
+func (dm *DownloadManager) AddDownload(name, magnet string, seeders, leechers int) error {
 	gid, err := dm.aria2.AddURI(magnet, dm.config.DownloadDir)
 	if err != nil {
 		return err
 	}
 	dm.mu.Lock()
 	dm.items = append(dm.items, &DownloadItem{
-		GID:     gid,
-		Name:    name,
-		Magnet:  magnet,
-		Started: time.Now(),
-		Status:  StatusMeta,
+		GID:      gid,
+		Name:     name,
+		Magnet:   magnet,
+		Started:  time.Now(),
+		Status:   StatusMeta,
+		Seeders:  seeders,
+		Leechers: leechers,
 	})
+	dm.saveMagnets()
 	dm.mu.Unlock()
 	return nil
 }
@@ -167,10 +232,54 @@ func (dm *DownloadManager) SyncFromAria2() {
 func (dm *DownloadManager) RecoverOrphans() {
 	entries, err := os.ReadDir(dm.config.DownloadDir)
 	if err != nil {
-		return
+		entries = nil
 	}
 
 	dm.Poll()
+
+	saved := dm.loadMagnets()
+	for _, e := range saved {
+		for _, d := range dm.items {
+			if d.Magnet == "" && nameOverlap(e.Name, d.Name) {
+				d.Magnet = e.Magnet
+				d.Seeders = e.Seeders
+				d.Leechers = e.Leechers
+				break
+			}
+		}
+	}
+
+	existingHashes := map[string]bool{}
+	for _, d := range dm.items {
+		if d.Magnet != "" {
+			if h := extractMagnetInfoHash(d.Magnet); h != "" {
+				existingHashes[h] = true
+			}
+		}
+	}
+
+	for _, e := range saved {
+		h := extractMagnetInfoHash(e.Magnet)
+		if h != "" && !existingHashes[h] {
+			gid, err := dm.aria2.AddURI(e.Magnet, dm.config.DownloadDir)
+			if err != nil {
+				continue
+			}
+			dm.mu.Lock()
+			dm.items = append(dm.items, &DownloadItem{
+				GID:      gid,
+				Name:     e.Name,
+				Magnet:   e.Magnet,
+				Started:  time.Now(),
+				Status:   StatusMeta,
+				Seeders:  e.Seeders,
+				Leechers: e.Leechers,
+			})
+			dm.mu.Unlock()
+			existingHashes[h] = true
+		}
+	}
+
 	knownDirs := map[string]bool{}
 	for _, d := range dm.items {
 		knownDirs[d.Name] = true
@@ -220,6 +329,8 @@ func (dm *DownloadManager) RecoverOrphans() {
 		dm.mu.Unlock()
 		knownDirs[name] = true
 	}
+
+	dm.saveMagnets()
 }
 
 func extractInfoHash(path string) (string, error) {
@@ -275,6 +386,7 @@ func (dm *DownloadManager) RemoveFilesAndTorrent(gid string) error {
 			break
 		}
 	}
+	dm.saveMagnets()
 	dm.mu.Unlock()
 	return nil
 }
@@ -533,6 +645,7 @@ func (m *Model) downloadsView() string {
 		}
 
 		name := Truncate(d.Name, max(30, m.width-10))
+		peers := FormatPeers(d.Seeders, d.Leechers)
 		barWidth := min(30, m.width-40)
 
 		var statusLine string
@@ -610,7 +723,7 @@ func (m *Model) downloadsView() string {
 			)
 		}
 
-		entry := fmt.Sprintf("%s %s\n  %s", cursor, name, statusLine)
+		entry := fmt.Sprintf("%s %s  %s\n  %s", cursor, name, peers, statusLine)
 
 		if i == m.downCursor {
 			parts = append(parts, selectedStyle.Render(entry))

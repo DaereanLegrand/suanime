@@ -198,7 +198,7 @@ func runGet(args []string) {
 	dm.SyncFromAria2()
 	defer dm.StopDaemon()
 
-	if err := dm.AddDownload(chosen.Name, chosen.MagnetLink); err != nil {
+	if err := dm.AddDownload(chosen.Name, chosen.MagnetLink, chosen.Seeders, chosen.Leechers); err != nil {
 		fmt.Fprintf(os.Stderr, "error adding download: %v\n", err)
 		os.Exit(1)
 	}

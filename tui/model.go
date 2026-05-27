@@ -224,7 +224,7 @@ func (m *Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor >= 0 && m.cursor < len(m.results) {
 			t := m.results[m.cursor]
 			if t.MagnetLink != "" {
-				err := m.dlManager.AddDownload(t.Name, t.MagnetLink)
+				err := m.dlManager.AddDownload(t.Name, t.MagnetLink, t.Seeders, t.Leechers)
 				if err != nil {
 					m.status = fmt.Sprintf("download err: %s", err)
 				} else {

@@ -58,7 +58,7 @@ func TestDownloadManager_AddAndPoll(t *testing.T) {
 
 	magnet := "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&tr=udp://tracker.coppersurfer.tk:6969/announce"
 
-	err := dm.AddDownload("Big Buck Bunny", magnet)
+	err := dm.AddDownload("Big Buck Bunny", magnet, 0, 0)
 	if err != nil {
 		t.Fatalf("AddDownload: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestDownloadManager_PauseResumeCancel(t *testing.T) {
 
 	magnet := "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&tr=udp://tracker.coppersurfer.tk:6969/announce"
 
-	err := dm.AddDownload("Test Torrent", magnet)
+	err := dm.AddDownload("Test Torrent", magnet, 0, 0)
 	if err != nil {
 		t.Fatalf("AddDownload: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestDownloadManager_MultipleDownloads(t *testing.T) {
 	}
 	for i, h := range hashes {
 		magnet := fmt.Sprintf("magnet:?xt=urn:btih:%s&dn=Test%d&tr=udp://tracker.coppersurfer.tk:6969/announce", h, i+1)
-		err := dm.AddDownload(fmt.Sprintf("Test %d", i+1), magnet)
+		err := dm.AddDownload(fmt.Sprintf("Test %d", i+1), magnet, 0, 0)
 		if err != nil {
 			t.Fatalf("AddDownload %d: %v", i+1, err)
 		}
@@ -257,7 +257,7 @@ func TestDownloadManager_NamePreservation(t *testing.T) {
 	customName := "[HorribleSubs] Tokyo Ghoul - 01 [1080p].mkv"
 	magnet := "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&tr=udp://tracker.coppersurfer.tk:6969/announce"
 
-	err := dm.AddDownload(customName, magnet)
+	err := dm.AddDownload(customName, magnet, 0, 0)
 	if err != nil {
 		t.Fatalf("AddDownload: %v", err)
 	}
