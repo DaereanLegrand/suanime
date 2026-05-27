@@ -36,6 +36,8 @@ type Model struct {
 	jikanMeta      *AnimeMeta
 	jikanFetching  bool
 	lastAnimeTitle string
+
+	scrollTick int
 }
 
 func NewModel(cfg Config) *Model {
@@ -150,6 +152,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		m.scrollTick++
 		m.dlManager.Poll()
 		if m.dlManager.RPCErr != "" {
 			m.status = m.dlManager.RPCErr
@@ -171,7 +174,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = fmt.Sprintf("%d dls: run=%d meta=%d wait=%d comp=%d fail=%d", dn, dr, dmet, dw, dc, df)
 			}
 		}
-		cmds = append(cmds, tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }))
+		cmds = append(cmds, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) }))
 	}
 
 	return m, tea.Batch(cmds...)
@@ -519,11 +522,31 @@ func (m *Model) resultsList(width int, maxH int) string {
 		}
 
 		peers := FormatPeers(t.Seeders, t.Leechers)
-		titleWidth := max(20, width-30)
-		title := Truncate(t.Name, titleWidth)
+		titleMax := width - 48
+		if titleMax < 8 {
+			titleMax = 8
+		}
+		title := t.Name
+		if len([]rune(title)) > titleMax {
+			if i == m.cursor {
+				runes := []rune(title)
+				s := m.scrollTick % len(runes)
+				visible := make([]rune, titleMax)
+				for j := 0; j < titleMax; j++ {
+					visible[j] = runes[(s+j)%len(runes)]
+				}
+				title = string(visible)
+			} else {
+				title = Truncate(title, titleMax)
+			}
+		}
 
-		line := fmt.Sprintf("%s %s  %-9s  %s  %s  %s",
-			marker, ep, size, peers, title, subtleStyle.Render(fmt.Sprintf("[%s]", t.Provider)),
+		prov := t.Provider
+		if len(prov) > 3 {
+			prov = prov[:3]
+		}
+		line := fmt.Sprintf("%s %s %-6s  %s  %s  [%s]",
+			marker, ep, size, peers, title, prov,
 		)
 
 		if i == m.cursor {
