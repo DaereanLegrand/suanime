@@ -42,7 +42,7 @@ var (
 	metaValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#e5e7eb"))
 	metaScoreStyle   = lipgloss.NewStyle().Foreground(warn).Bold(true)
 	metaGenreStyle   = lipgloss.NewStyle().Foreground(muted)
-	metaSynopsisStyle = lipgloss.NewStyle().Foreground(muted).Width(40)
+	metaSynopsisStyle = lipgloss.NewStyle().Foreground(muted)
 	metaDivider      = lipgloss.NewStyle().Foreground(surface).Render("│")
 	metaPanelStyle   = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(surface)
 )
