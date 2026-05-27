@@ -64,10 +64,6 @@ func (dm *DownloadManager) StartDaemon() error {
 	os.MkdirAll(dm.config.DownloadDir, 0755)
 	sessionFile := dm.sessionFile()
 
-	if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
-		os.WriteFile(sessionFile, nil, 0644)
-	}
-
 	port := fmt.Sprintf("%d", dm.config.Aria2RPCPort)
 	args := []string{
 		"--enable-rpc",
@@ -81,8 +77,10 @@ func (dm *DownloadManager) StartDaemon() error {
 		"--file-allocation=none",
 		"--save-session=" + sessionFile,
 		"--save-session-interval=10",
-		"--input-file=" + sessionFile,
 		"--dir=" + dm.config.DownloadDir,
+	}
+	if _, err := os.Stat(sessionFile); err == nil {
+		args = append(args, "--input-file="+sessionFile)
 	}
 	if dm.config.Aria2RPCSecret != "" {
 		args = append(args, "--rpc-secret="+dm.config.Aria2RPCSecret)
@@ -161,6 +159,66 @@ func (dm *DownloadManager) FindGID(gid string) *DownloadItem {
 
 func (dm *DownloadManager) SyncFromAria2() {
 	dm.Poll()
+}
+
+func (dm *DownloadManager) RecoverOrphans() {
+	entries, err := os.ReadDir(dm.config.DownloadDir)
+	if err != nil {
+		return
+	}
+
+	dm.Poll()
+	known := map[string]bool{}
+	for _, d := range dm.items {
+		known[d.Name] = true
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".aria2") {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".aria2")
+		if known[name] {
+			continue
+		}
+
+		hash, err := extractInfoHash(filepath.Join(dm.config.DownloadDir, entry.Name()))
+		if err != nil || hash == "" {
+			continue
+		}
+
+		magnet := providers.MagnetFromHash(hash, name)
+
+		gid, err := dm.aria2.AddURI(magnet, dm.config.DownloadDir)
+		if err != nil {
+			continue
+		}
+
+		dm.mu.Lock()
+		dm.items = append(dm.items, &DownloadItem{
+			GID:     gid,
+			Name:    name,
+			Magnet:  magnet,
+			Started: time.Now(),
+			Status:  StatusMeta,
+		})
+		dm.mu.Unlock()
+	}
+}
+
+func extractInfoHash(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if len(data) < 30 {
+		return "", fmt.Errorf("file too short")
+	}
+	if data[8] == 0x00 && data[9] == 0x14 {
+		hash := fmt.Sprintf("%x", data[10:30])
+		return hash, nil
+	}
+	return "", fmt.Errorf("unknown aria2 format")
 }
 
 func (dm *DownloadManager) RemoveFilesAndTorrent(gid string) error {

@@ -194,6 +194,8 @@ func runGet(args []string) {
 		fmt.Fprintf(os.Stderr, "error starting aria2: %v\n", err)
 		os.Exit(1)
 	}
+	dm.RecoverOrphans()
+	dm.SyncFromAria2()
 	defer dm.StopDaemon()
 
 	if err := dm.AddDownload(chosen.Name, chosen.MagnetLink); err != nil {
@@ -375,6 +377,7 @@ func runTUI() {
 	if err := dm.StartDaemon(); err != nil {
 		m.DaemonErr = fmt.Sprintf("aria2: %v", err)
 	} else {
+		dm.RecoverOrphans()
 		dm.SyncFromAria2()
 	}
 	defer dm.StopDaemon()
