@@ -1,26 +1,29 @@
 # Architecture
 
-## Code Structure (hash: `90f18b8`)
+## Code Structure
 
 ```
 suanime/
-  main.go                   CLI entry point, subcommands
+  main.go                   CLI entry point, subcommands, Kitty terminal check
   providers/
     provider.go             AnimeTorrent struct, Provider interface, SearchAll, parsers
     nyaa.go                 Nyaa.si + Sukebei RSS provider, parseNyaaRSS
     tokyotosho.go           Tokyo Toshokan RSS provider, parseTTRSS
     *_test.go               17 unit + integration tests
   tui/
-    model.go                Bubbletea TUI: search input, results list, key handling
+    model.go                Bubbletea TUI: split-pane layout, search input, key handling
     download.go             DownloadManager, aria2 lifecycle, Poll engine, downloadsView
     aria2.go                JSON-RPC client, progressBar, parseLength, progressPct
     config.go               Config loading/saving, DefaultConfig
     styles.go               Lipgloss theme (dark purple), Navbar, FormatPeers
+    kitty.go                Kitty graphics protocol: image display via APC escape sequences
+    jikan.go                Jikan API (MyAnimeList) client, fuzzy matching, metadata cache
     *_test.go               5 download integration tests
   docs/
     README.md               Overview, quick start, features
     CLI.md                  CLI command reference
     CONFIG.md               Config file documentation
+    COVERART.md             Cover art & metadata feature design
     ARCHITECTURE.md         This file
 ```
 
@@ -102,6 +105,41 @@ type Provider interface {
     Name() string
     Search(ctx, query) ([]*AnimeTorrent, error)
 }
+```
+
+### Kitty Image Display Layer
+
+Suanime uses the [Kitty graphics protocol](https://sw.kovidgoyal.net/kitty/graphics-protocol/) to display cover art directly in the terminal. Images are transmitted as APC escape sequences (`\033_G...\033\\`) written to stderr.
+
+```
+Jikan cover URL
+  → HTTP GET → ~/.cache/suanime/images/<file>
+  → base64-encode → kitty APC escape sequence
+  → write to stderr with cursor positioning
+```
+
+The escape sequence format (cursor-positioned, Z-above-text):
+```
+\033[s\033[<row>;<col>H\033_Ga=T,f=100,t=d,z=1,i=<id>;<base64_png>\033\\\033[u
+```
+
+- `a=T` — transmit and display
+- `f=100` — PNG format (non-PNG converted via ImageMagick `convert` to `/tmp/suanime/`)
+- `t=d` — direct transmission
+- `z=1` — Z-index above text layer (prevents TUI text render from covering image)
+- `i=<id>` — unique image ID for deletion
+
+Images are placed at cursor position (no hardcoded pixel coordinates). Cleared on metadata updates via `\033_Ga=d,d=I,i=<id>\033\\` (delete by ID). Layout uses fixed `.Height()` to maintain consistent panel sizes across navigation.
+
+### Jikan Metadata Flow
+
+```
+Cursor moves to new anime torrent
+  → extractAnimeTitle() parses torrent name
+  → jikanSearch() queries Jikan API v4
+  → bestMatch() fuzzy-matches result by title overlap
+  → AnimeMeta cached per session
+  → jikanResultMsg triggers kitty image display
 ```
 
 ## JSON-RPC (aria2)

@@ -22,6 +22,7 @@ Build: `go build -ldflags="-X main.commit=$(git rev-parse --short HEAD)" -o suan
 
 ## Requirements
 
+- **Kitty terminal** — required for TUI (kitty graphics protocol for cover art display)
 - **Go** 1.22+
 - **aria2c** (`pacman -S aria2`, `apt install aria2`, `brew install aria2`)
 - **gum** (optional, for interactive selection)

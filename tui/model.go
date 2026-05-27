@@ -37,6 +37,7 @@ type Model struct {
 	jikanFetching  bool
 	lastAnimeTitle string
 
+	scrollTick int
 	NoCover   bool
 	DaemonErr string
 }
@@ -132,9 +133,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.jikanMeta = msg.meta
 			if !m.NoCover && msg.meta.ImageURL != "" && m.width > 0 {
-				rightW := m.width/2 - 2
-				imgH := m.height / 3
-				kittyShowImageFromURL(msg.meta.ImageURL, m.width/2+1, 3, rightW, imgH)
+				imgH := max(5, (m.height-5)/2)
+				if imgH > 30 {
+					imgH = 30
+				}
+				col := m.width/2 - 2
+				imgW := m.width/2 - 3
+				cmds = append(cmds, KittyShowCmd(msg.meta.ImageURL, col, 2, imgW, imgH))
 			}
 		}
 
@@ -149,6 +154,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
+		m.scrollTick++
 		m.dlManager.Poll()
 		if m.dlManager.RPCErr != "" {
 			m.status = m.dlManager.RPCErr
@@ -170,7 +176,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = fmt.Sprintf("%d dls: run=%d meta=%d wait=%d comp=%d fail=%d", dn, dr, dmet, dw, dc, df)
 			}
 		}
-		cmds = append(cmds, tea.Tick(2*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) }))
+		cmds = append(cmds, tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) }))
 	}
 
 	return m, tea.Batch(cmds...)
@@ -218,6 +224,7 @@ func (m *Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		m.input.SetValue("")
 		m.cursor = 0
+		clearAllImages()
 		return m, nil
 
 	case "enter", "d":
@@ -353,6 +360,7 @@ func (m *Model) jikanCmd() tea.Cmd {
 	m.lastAnimeTitle = title
 	m.jikanFetching = true
 	m.jikanMeta = nil
+	clearAllImages()
 	return jikanFetchCmd(title)
 }
 
@@ -389,7 +397,7 @@ func (m *Model) View() string {
 		footer,
 	)
 
-	return lipgloss.NewStyle().Width(w).Height(m.height).Render(main)
+	return main
 }
 
 func (m *Model) helpKeys() []string {
@@ -445,11 +453,15 @@ func (m *Model) searchView() string {
 		return m.centeredView("no results found\n\npress / to search again")
 	}
 
-	leftW := m.width / 2
-	rightW := m.width - leftW - 1
+	leftW := m.width/2 - 3
+	rightW := m.width/2 - 3
+	paneH := m.height - 4
+	if paneH < 5 {
+		paneH = 5
+	}
 
-	left := m.resultsList(leftW)
-	right := m.metaPanel(rightW)
+	left := m.resultsList(leftW, paneH)
+	right := m.rightPane(rightW, paneH)
 
 	divider := metaDivider
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, divider, right)
@@ -473,12 +485,12 @@ func (m *Model) centeredView(msg string) string {
 	)
 }
 
-func (m *Model) resultsList(width int) string {
+func (m *Model) resultsList(width int, maxH int) string {
 	var parts []string
 	parts = append(parts, accentStyle.Bold(true).Render("Results"))
 	parts = append(parts, mutedStyle.Render(fmt.Sprintf("  %-3s %-4s %-9s %s", "", "Ep", "Size", "Title")))
 
-	visible := max(3, m.height-12)
+	visible := maxH - 2
 	start := m.cursor - visible/2
 	if start < 0 {
 		start = 0
@@ -509,95 +521,140 @@ func (m *Model) resultsList(width int) string {
 		}
 
 		peers := FormatPeers(t.Seeders, t.Leechers)
-		titleWidth := max(20, width-30)
-		title := Truncate(t.Name, titleWidth)
+		prov := t.Provider
+		if len(prov) > 3 {
+			prov = prov[:3]
+		}
 
-		line := fmt.Sprintf("%s %s  %-9s  %s  %s  %s",
-			marker, ep, size, peers, title, subtleStyle.Render(fmt.Sprintf("[%s]", t.Provider)),
-		)
+		prefix := fmt.Sprintf("%s %s %-6s  %s  ", marker, ep, size, peers)
+		suffix := fmt.Sprintf("  [%s]", prov)
+		titleSpace := width - lipgloss.Width(prefix) - lipgloss.Width(suffix)
+		if titleSpace < 6 {
+			titleSpace = 6
+		}
 
+		title := t.Name
+		if lipgloss.Width(title) > titleSpace {
+			if i == m.cursor {
+				runes := []rune(title)
+				s := m.scrollTick % len(runes)
+				var visible []rune
+				visibleW := 0
+				for j := 0; j < len(runes) && visibleW < titleSpace; j++ {
+					r := runes[(s+j)%len(runes)]
+					rw := lipgloss.Width(string(r))
+					if visibleW+rw > titleSpace {
+						break
+					}
+					visible = append(visible, r)
+					visibleW += rw
+				}
+				title = string(visible)
+			} else {
+				title = Truncate(title, titleSpace)
+			}
+		}
+
+		line := prefix + title + suffix
 		if i == m.cursor {
-			parts = append(parts, selectedStyle.Width(width-2).Render(line))
+			parts = append(parts, selectedStyle.Render(line))
 		} else {
 			parts = append(parts, mutedStyle.Render(line))
 		}
 	}
+	for len(parts) < maxH {
+		parts = append(parts, "")
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-func (m *Model) metaPanel(width int) string {
-	if m.jikanFetching {
-		return metaPanelStyle.Width(width).Render(
-			lipgloss.JoinVertical(lipgloss.Left,
-				accentStyle.Bold(true).Render("Info"),
-				"",
-				loadingStyle.Render("fetching..."),
-			),
-		)
-	}
-	if m.jikanMeta == nil {
-		if !m.NoCover {
-			kittyClearImage()
-		}
-		return metaPanelStyle.Width(width).Render(
-			lipgloss.JoinVertical(lipgloss.Left,
-				accentStyle.Bold(true).Render("Info"),
-				"",
-				subtleStyle.Render("no metadata"),
-			),
-		)
-	}
-
-	meta := m.jikanMeta
+func (m *Model) metaPanel(width int, maxH int) string {
 	var parts []string
 
-	parts = append(parts, accentStyle.Bold(true).Render("Info"))
-	parts = append(parts, "")
-
-	if meta.TitleEng != "" && meta.TitleEng != meta.Title {
-		parts = append(parts, metaTitleStyle.Render(Truncate(meta.TitleEng, width-2)))
-	}
-	parts = append(parts, metaTitleStyle.Render(Truncate(meta.Title, width-2)))
-
-	scoreStr := fmt.Sprintf("★ %.2f", meta.Score)
-	parts = append(parts, fmt.Sprintf("%s  %s  %s",
-		metaScoreStyle.Render(scoreStr),
-		metaValueStyle.Render(fmt.Sprintf("%d", meta.Year)),
-		metaValueStyle.Render(meta.Type),
-	))
-
-	if meta.Rank > 0 {
-		parts = append(parts, fmt.Sprintf("Rank: %s  Popularity: %s",
-			metaValueStyle.Render(fmt.Sprintf("#%d", meta.Rank)),
-			metaValueStyle.Render(fmt.Sprintf("#%d", meta.Popularity)),
-		))
-	}
-	if meta.Episodes > 0 {
-		parts = append(parts, fmt.Sprintf("%s episodes  %s",
-			metaValueStyle.Render(fmt.Sprintf("%d", meta.Episodes)),
-			metaValueStyle.Render(meta.Status),
-		))
-	}
-
-	if len(meta.Genres) > 0 {
-		genres := make([]string, len(meta.Genres))
-		for i, g := range meta.Genres {
-			genres[i] = metaGenreStyle.Render(g)
-		}
-		parts = append(parts, strings.Join(genres, " · "))
-	}
-
-	if len(meta.Studios) > 0 {
-		parts = append(parts, metaLabelStyle.Render(strings.Join(meta.Studios, ", ")))
-	}
-
-	if meta.Synopsis != "" {
+	if m.jikanFetching {
+		parts = append(parts, accentStyle.Bold(true).Render("Info"))
 		parts = append(parts, "")
-		syn := Truncate(meta.Synopsis, width*6)
-		parts = append(parts, metaSynopsisStyle.Width(width-2).Render(syn))
+		parts = append(parts, loadingStyle.Render("fetching..."))
+	} else if m.jikanMeta == nil {
+		parts = append(parts, accentStyle.Bold(true).Render("Info"))
+		parts = append(parts, "")
+		parts = append(parts, subtleStyle.Render("no metadata"))
+	} else {
+		meta := m.jikanMeta
+		parts = append(parts, accentStyle.Bold(true).Render("Info"))
+		parts = append(parts, "")
+
+		if meta.TitleEng != "" && meta.TitleEng != meta.Title {
+			parts = append(parts, metaTitleStyle.Render(Truncate(meta.TitleEng, width-2)))
+		}
+		parts = append(parts, metaTitleStyle.Render(Truncate(meta.Title, width-2)))
+
+		scoreStr := fmt.Sprintf("★ %.2f", meta.Score)
+		var flags []string
+		flags = append(flags, metaScoreStyle.Render(scoreStr))
+		flags = append(flags, metaValueStyle.Render(fmt.Sprintf("%d", meta.Year)))
+		flags = append(flags, metaValueStyle.Render(meta.Type))
+		if meta.Episodes > 0 {
+			flags = append(flags, metaValueStyle.Render(fmt.Sprintf("%d ep", meta.Episodes)))
+		}
+		parts = append(parts, strings.Join(flags, "  "))
+
+		if meta.Rank > 0 {
+			parts = append(parts, fmt.Sprintf("Rank: %s  Popularity: %s",
+				metaValueStyle.Render(fmt.Sprintf("#%d", meta.Rank)),
+				metaValueStyle.Render(fmt.Sprintf("#%d", meta.Popularity)),
+			))
+		}
+
+		if len(meta.Genres) > 0 {
+			genres := make([]string, len(meta.Genres))
+			for i, g := range meta.Genres {
+				genres[i] = metaGenreStyle.Render(g)
+			}
+			parts = append(parts, strings.Join(genres, " · "))
+		}
+
+		if len(meta.Studios) > 0 {
+			parts = append(parts, metaLabelStyle.Render(strings.Join(meta.Studios, ", ")))
+		}
+
+		if meta.Synopsis != "" {
+			remaining := maxH - len(parts) - 1
+			if remaining > 0 {
+				parts = append(parts, "")
+				syn := strings.ReplaceAll(meta.Synopsis, "\n", " ")
+				syn = strings.ReplaceAll(syn, "\r", "")
+				wrapWidth := width - 5
+				if wrapWidth < 10 {
+					wrapWidth = 10
+				}
+				wrapped := wrapText(syn, wrapWidth)
+				if len(wrapped) > remaining {
+					wrapped = wrapped[:remaining]
+				}
+				for _, ln := range wrapped {
+					parts = append(parts, metaSynopsisStyle.Render(ln))
+				}
+			}
+		}
 	}
 
-	return metaPanelStyle.Width(width).Render(
-		lipgloss.JoinVertical(lipgloss.Left, parts...),
-	)
+	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	lines := strings.Split(content, "\n")
+	for len(lines) < maxH {
+		lines = append(lines, "")
+	}
+	return metaPanelStyle.Width(width).Render(strings.Join(lines, "\n"))
+}
+
+func (m *Model) rightPane(width int, maxH int) string {
+	imgH := maxH / 2
+	infoH := maxH - imgH
+
+	lines := make([]string, imgH)
+
+	info := m.metaPanel(width, infoH)
+
+	return lipgloss.JoinVertical(lipgloss.Top, strings.Join(lines, "\n"), info)
 }

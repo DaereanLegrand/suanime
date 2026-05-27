@@ -42,7 +42,7 @@ var (
 	metaValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#e5e7eb"))
 	metaScoreStyle   = lipgloss.NewStyle().Foreground(warn).Bold(true)
 	metaGenreStyle   = lipgloss.NewStyle().Foreground(muted)
-	metaSynopsisStyle = lipgloss.NewStyle().Foreground(muted).Width(40)
+	metaSynopsisStyle = lipgloss.NewStyle().Foreground(muted)
 	metaDivider      = lipgloss.NewStyle().Foreground(surface).Render("│")
 	metaPanelStyle   = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(surface)
 )
@@ -112,6 +112,25 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func wrapText(text string, lineWidth int) []string {
+	var lines []string
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	current := words[0]
+	for _, w := range words[1:] {
+		if len(current)+1+len(w) <= lineWidth {
+			current += " " + w
+		} else {
+			lines = append(lines, current)
+			current = w
+		}
+	}
+	lines = append(lines, current)
+	return lines
 }
 
 type StatusMsg string

@@ -109,7 +109,7 @@ func jikanSearch(query string) (*AnimeMeta, error) {
 	meta := &AnimeMeta{
 		Title:      best.Title,
 		TitleEng:   best.TitleEng,
-		ImageURL:   best.Images.WebP.Large,
+		ImageURL:   best.Images.JPG.Large,
 		Score:      best.Score,
 		Popularity: best.Popularity,
 		Rank:       best.Rank,
@@ -120,7 +120,7 @@ func jikanSearch(query string) (*AnimeMeta, error) {
 		Synopsis:   best.Synopsis,
 	}
 	if meta.ImageURL == "" {
-		meta.ImageURL = best.Images.JPG.Large
+		meta.ImageURL = best.Images.WebP.Large
 	}
 	if meta.TitleEng == "" {
 		meta.TitleEng = best.Title

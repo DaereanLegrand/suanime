@@ -62,6 +62,8 @@ GET https://api.jikan.moe/v4/anime?q=<title>&limit=3
 
 ## Kitty Graphics Protocol (`tui/kitty.go`)
 
+Kitty only supports `f=24` (RGB), `f=32` (RGBA), and `f=100` (PNG) for in-band transmission. Images from Jikan (JPEG/WebP) must be decoded and re-encoded as PNG before sending. Image data is written directly to `/dev/tty` (not stderr) to bypass the TUI framework's output buffer — the same approach used by lf's image preview system.
+
 ### Detection
 
 ```go
@@ -74,23 +76,26 @@ On startup, if kitty not detected: print error and `os.Exit(1)`.
 
 ### Display Image
 
-Kitty graphics protocol APC escape sequence:
+Image bytes are decoded (JPEG/WebP → raw pixels) and re-encoded as PNG. The PNG data is then transmitted via a kitty APC escape sequence written directly to `/dev/tty`:
 
 ```
-\033_Ga=T,f=100,t=d,s=<width>,v=<height>;<base64_data>\033\\
+\033[s\033[<row>;<col>H\033_Ga=T,f=100,t=d,z=1,i=<id>;<base64_png>\033\\\033[u
 ```
 
-Parameters:
+- `\033[s` / `\033[u` — save/restore cursor position
+- `\033[<row>;<col>H` — move cursor to target cell (row+1, col+1)
 - `a=T` — transmit and display
-- `f=100` — format: 100 = PNG (base64-encoded raw data)
-- `t=d` — transmission: direct (no chunking)
-- `s=<w>` — display width in pixels
-- `v=<h>` — display height in pixels
+- `f=100` — PNG format (always — non-PNG sources converted via ImageMagick `convert`)
+- `t=d` — direct transmission
+- `z=1` — Z-index above text layer (prevents TUI text render from covering the image)
+- `i=<id>` — unique image ID for deletion tracking
+
+Non-PNG images (WebP, JPEG) are converted via `convert <src> png:/tmp/suanime/<name>.png`. Temporary PNGs are cleaned up on exit.
 
 ### Clear Image
 
 ```
-\033_Ga=d,d=I,<image_id>\033\\
+\033_Ga=d,d=I,i=<image_id>\033\\
 ```
 
 - `a=d` — delete
@@ -100,15 +105,18 @@ Parameters:
 ### Image Pipeline
 
 ```
-Jikan cover URL
-  → wget/GET to ~/.cache/suanime/images/<mal_id>.jpg
+Jikan JPG/WebP URL
+  → HTTP GET to ~/.cache/suanime/images/<filename>
   → Read file bytes
-  → Base64-encode
-  → Scale to fit pane (computed from cell dimensions × cell count)
-  → Write to /dev/stderr with cursor positioning at right pane coordinates
+  → If not PNG: decode (image.Decode / jpeg.Decode), re-encode as PNG
+  → Base64-encode PNG bytes
+  → Write kitty APC escape sequence to /dev/tty
+  → Cursor positioned at right pane coordinates
 ```
 
-Cell dimensions: `tea.WindowSizeMsg` gives width/height in cells. Terminal cell aspect ratio is ~2:1 (width:height). Compute pixel area from `cells × cell_pixel_size`.
+### Layout Constraints
+
+The search view uses a 50/50 split. Available content height is `m.height - 4` (nav bar + footer). The results list caps visible items to `maxH - 2`. The meta panel tracks header line count and truncates synopsis to fit within remaining height. Both panels are wrapped in `MaxHeight()` to prevent overflow past the terminal boundary.
 
 ## Layout: Always-On 50/50 Split
 
