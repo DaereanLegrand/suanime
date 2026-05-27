@@ -63,8 +63,10 @@ func (dm *DownloadManager) StartDaemon() error {
 
 	os.MkdirAll(dm.config.DownloadDir, 0755)
 	sessionFile := dm.sessionFile()
-	os.Remove(sessionFile)
-	os.Remove(sessionFile + "_old")
+
+	if _, err := os.Stat(sessionFile); os.IsNotExist(err) {
+		os.WriteFile(sessionFile, nil, 0644)
+	}
 
 	port := fmt.Sprintf("%d", dm.config.Aria2RPCPort)
 	args := []string{
@@ -72,12 +74,14 @@ func (dm *DownloadManager) StartDaemon() error {
 		"--rpc-listen-port=" + port,
 		"--rpc-allow-origin-all",
 		"--rpc-listen-all=false",
-		"--seed-ratio=2.0",
+		"--check-integrity=true",
+		"--seed-ratio=0.0",
 		"--summary-interval=0",
 		"--console-log-level=error",
 		"--file-allocation=none",
 		"--save-session=" + sessionFile,
 		"--save-session-interval=10",
+		"--input-file=" + sessionFile,
 		"--dir=" + dm.config.DownloadDir,
 	}
 	if dm.config.Aria2RPCSecret != "" {
@@ -155,7 +159,15 @@ func (dm *DownloadManager) FindGID(gid string) *DownloadItem {
 	return nil
 }
 
+func (dm *DownloadManager) SyncFromAria2() {
+	dm.Poll()
+}
+
 func (dm *DownloadManager) Cancel(gid string) error {
+	return dm.aria2.Pause(gid)
+}
+
+func (dm *DownloadManager) RemoveFilesAndTorrent(gid string) error {
 	dm.aria2.Remove(gid)
 	dm.aria2.ForceRemove(gid)
 	dm.aria2.RemoveResult(gid)
@@ -437,7 +449,7 @@ func (m *Model) downloadsView() string {
 			statusLine = fmt.Sprintf("%s  %s  %s  %s/s",
 				goodStyle.Render(bar),
 				goodStyle.Render(size),
-				accentStyle.Render("seeding (ratio 2.0)"),
+				accentStyle.Render("seeding"),
 				subtleStyle.Render(providers.FormatSize(d.Speed)),
 			)
 		case StatusFailed:
@@ -462,7 +474,7 @@ func (m *Model) downloadsView() string {
 	}
 
 	parts = append(parts, "")
-	parts = append(parts, mutedStyle.Render("p: pause  r: resume  c: cancel  d: remove  esc: back"))
+	parts = append(parts, mutedStyle.Render("p: pause  r: resume  c: cancel  R: remove"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

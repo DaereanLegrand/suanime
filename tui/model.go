@@ -298,20 +298,16 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 			if err := m.dlManager.Cancel(gid); err != nil {
 				m.status = fmt.Sprintf("cancel err: %s", err)
 			} else {
-				m.status = "cancelled"
-				items = m.dlManager.GetItems()
-				if m.downCursor >= len(items) {
-					m.downCursor = max(0, len(items)-1)
-				}
+				m.status = "cancelled (session preserved, can resume)"
 			}
 		}
-	case "d":
+	case "R":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
 			gid := items[m.downCursor].GID
-			if err := m.dlManager.Cancel(gid); err != nil {
+			if err := m.dlManager.RemoveFilesAndTorrent(gid); err != nil {
 				m.status = fmt.Sprintf("remove err: %s", err)
 			} else {
-				m.status = "removed"
+				m.status = "removed (files deleted)"
 				items = m.dlManager.GetItems()
 				if m.downCursor >= len(items) {
 					m.downCursor = max(0, len(items)-1)
@@ -429,6 +425,7 @@ func (m *Model) helpKeys() []string {
 		accentStyle.Render("p") + " pause",
 		accentStyle.Render("r") + " resume",
 		accentStyle.Render("c") + " cancel",
+		accentStyle.Render("R") + " remove",
 		subtleStyle.Render("j/k") + " move",
 		subtleStyle.Render("tab") + " search",
 		subtleStyle.Render("q") + " quit",

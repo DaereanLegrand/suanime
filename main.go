@@ -374,6 +374,8 @@ func runTUI() {
 
 	if err := dm.StartDaemon(); err != nil {
 		m.DaemonErr = fmt.Sprintf("aria2: %v", err)
+	} else {
+		dm.SyncFromAria2()
 	}
 	defer dm.StopDaemon()
 
