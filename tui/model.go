@@ -522,33 +522,34 @@ func (m *Model) resultsList(width int, maxH int) string {
 		}
 
 		peers := FormatPeers(t.Seeders, t.Leechers)
-		titleMax := width - 50
-		if titleMax < 8 {
-			titleMax = 8
-		}
-		title := t.Name
-		if len([]rune(title)) > titleMax {
-			if i == m.cursor {
-				runes := []rune(title)
-				s := m.scrollTick % len(runes)
-				visible := make([]rune, titleMax)
-				for j := 0; j < titleMax; j++ {
-					visible[j] = runes[(s+j)%len(runes)]
-				}
-				title = string(visible)
-			} else {
-				title = Truncate(title, titleMax)
-			}
-		}
-
 		prov := t.Provider
 		if len(prov) > 3 {
 			prov = prov[:3]
 		}
-		line := fmt.Sprintf("%s %s %-6s  %s  %s  [%s]",
-			marker, ep, size, peers, title, prov,
-		)
 
+		prefix := fmt.Sprintf("%s %s %-6s  %s  ", marker, ep, size, peers)
+		suffix := fmt.Sprintf("  [%s]", prov)
+		titleSpace := width - len([]rune(prefix)) - len([]rune(suffix))
+		if titleSpace < 6 {
+			titleSpace = 6
+		}
+
+		title := t.Name
+		if len([]rune(title)) > titleSpace {
+			if i == m.cursor {
+				runes := []rune(title)
+				s := m.scrollTick % len(runes)
+				visible := make([]rune, titleSpace)
+				for j := 0; j < titleSpace; j++ {
+					visible[j] = runes[(s+j)%len(runes)]
+				}
+				title = string(visible)
+			} else {
+				title = Truncate(title, titleSpace)
+			}
+		}
+
+		line := prefix + title + suffix
 		if i == m.cursor {
 			parts = append(parts, selectedStyle.Render(line))
 		} else {
@@ -618,10 +619,16 @@ func (m *Model) metaPanel(width int, maxH int) string {
 				parts = append(parts, "")
 				syn := strings.ReplaceAll(meta.Synopsis, "\n", " ")
 				syn = strings.ReplaceAll(syn, "\r", "")
-				syn = Truncate(syn, width*remaining*2)
-				synRendered := metaSynopsisStyle.Width(width - 6).MaxHeight(remaining).Render(syn)
-				for _, synLine := range strings.Split(synRendered, "\n") {
-					parts = append(parts, synLine)
+				wrapWidth := width - 5
+				if wrapWidth < 10 {
+					wrapWidth = 10
+				}
+				wrapped := wrapText(syn, wrapWidth)
+				if len(wrapped) > remaining {
+					wrapped = wrapped[:remaining]
+				}
+				for _, ln := range wrapped {
+					parts = append(parts, metaSynopsisStyle.Render(ln))
 				}
 			}
 		}

@@ -114,6 +114,25 @@ func min(a, b int) int {
 	return b
 }
 
+func wrapText(text string, lineWidth int) []string {
+	var lines []string
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return nil
+	}
+	current := words[0]
+	for _, w := range words[1:] {
+		if len(current)+1+len(w) <= lineWidth {
+			current += " " + w
+		} else {
+			lines = append(lines, current)
+			current = w
+		}
+	}
+	lines = append(lines, current)
+	return lines
+}
+
 type StatusMsg string
 type ErrMsg string
 
