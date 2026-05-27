@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -131,14 +130,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.jikanMeta = msg.meta
 			if msg.meta.ImageURL != "" && m.width > 0 {
-				leftW := m.width / 2
-				rightW := m.width - leftW - 1
-				imgH := max(5, (m.height-5)/3)
-				if imgH > 20 {
-					imgH = 20
+				imgH := max(5, (m.height-5)/2)
+				if imgH > 30 {
+					imgH = 30
 				}
-				col := m.width/2 + 1
-				cmds = append(cmds, KittyShowCmd(msg.meta.ImageURL, col, 2, rightW, imgH))
+				col := m.width/2 - 2
+				imgW := m.width/2 - 3
+				cmds = append(cmds, KittyShowCmd(msg.meta.ImageURL, col, 2, imgW, imgH))
 			}
 		}
 
@@ -399,12 +397,6 @@ func (m *Model) View() string {
 		footer,
 	)
 
-	cl := 1 + strings.Count(content, "\n")
-	f, _ := os.OpenFile("/tmp/suanime-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	fmt.Fprintf(f, "w=%d m.h=%d contentLines=%d leftW=%d rightW=%d wrapW=%d paneH=%d imgH=%d\n",
-		m.width, m.height, cl, m.width/2, m.width-m.width/2-1, (m.width-m.width/2-1)-5, max(5, m.height-4), max(5, (m.height-5)/3))
-	f.Close()
-
 	return main
 }
 
@@ -461,15 +453,15 @@ func (m *Model) searchView() string {
 		return m.centeredView("no results found\n\npress / to search again")
 	}
 
-	leftW := m.width / 2
-	rightW := m.width - leftW - 1
+	leftW := m.width/2 - 3
+	rightW := m.width/2 - 3
 	paneH := m.height - 4
 	if paneH < 5 {
 		paneH = 5
 	}
 
 	left := m.resultsList(leftW, paneH)
-	right := m.metaPanel(rightW, paneH)
+	right := m.rightPane(rightW, paneH)
 
 	divider := metaDivider
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, divider, right)
@@ -536,19 +528,26 @@ func (m *Model) resultsList(width int, maxH int) string {
 
 		prefix := fmt.Sprintf("%s %s %-6s  %s  ", marker, ep, size, peers)
 		suffix := fmt.Sprintf("  [%s]", prov)
-		titleSpace := width - len([]rune(prefix)) - len([]rune(suffix))
+		titleSpace := width - lipgloss.Width(prefix) - lipgloss.Width(suffix)
 		if titleSpace < 6 {
 			titleSpace = 6
 		}
 
 		title := t.Name
-		if len([]rune(title)) > titleSpace {
+		if lipgloss.Width(title) > titleSpace {
 			if i == m.cursor {
 				runes := []rune(title)
 				s := m.scrollTick % len(runes)
-				visible := make([]rune, titleSpace)
-				for j := 0; j < titleSpace; j++ {
-					visible[j] = runes[(s+j)%len(runes)]
+				var visible []rune
+				visibleW := 0
+				for j := 0; j < len(runes) && visibleW < titleSpace; j++ {
+					r := runes[(s+j)%len(runes)]
+					rw := lipgloss.Width(string(r))
+					if visibleW+rw > titleSpace {
+						break
+					}
+					visible = append(visible, r)
+					visibleW += rw
 				}
 				title = string(visible)
 			} else {
@@ -631,17 +630,6 @@ func (m *Model) metaPanel(width int, maxH int) string {
 					wrapWidth = 10
 				}
 				wrapped := wrapText(syn, wrapWidth)
-				f, _ := os.OpenFile("/tmp/suanime-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-				fmt.Fprintf(f, "  syn: width=%d wrapWidth=%d remaining=%d wrappedLines=%d\n",
-					width, wrapWidth, remaining, len(wrapped))
-				for i, ln := range wrapped {
-					show := ln
-					if len(show) > 80 {
-						show = show[:80] + "..."
-					}
-					fmt.Fprintf(f, "    [%d] len=%d: %q\n", i, len(ln), show)
-				}
-				f.Close()
 				if len(wrapped) > remaining {
 					wrapped = wrapped[:remaining]
 				}
@@ -658,4 +646,15 @@ func (m *Model) metaPanel(width int, maxH int) string {
 		lines = append(lines, "")
 	}
 	return metaPanelStyle.Width(width).Render(strings.Join(lines, "\n"))
+}
+
+func (m *Model) rightPane(width int, maxH int) string {
+	imgH := maxH / 2
+	infoH := maxH - imgH
+
+	lines := make([]string, imgH)
+
+	info := m.metaPanel(width, infoH)
+
+	return lipgloss.JoinVertical(lipgloss.Top, strings.Join(lines, "\n"), info)
 }
