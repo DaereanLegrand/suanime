@@ -130,7 +130,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.meta.ImageURL != "" && m.width > 0 {
 				leftW := m.width / 2
 				rightW := m.width - leftW - 1
-				imgH := max(5, (m.height-4)/3)
+				imgH := max(5, (m.height-5)/3)
 				if imgH > 20 {
 					imgH = 20
 				}
@@ -452,7 +452,7 @@ func (m *Model) searchView() string {
 
 	leftW := m.width / 2
 	rightW := m.width - leftW - 1
-	contentH := m.height - 4
+	contentH := m.height - 5
 	if contentH < 5 {
 		contentH = 5
 	}
@@ -590,13 +590,15 @@ func (m *Model) metaPanel(width int, maxH int) string {
 		}
 
 		if meta.Synopsis != "" {
-			parts = append(parts, "")
-			remaining := maxH - len(parts)
+			remaining := maxH - len(parts) - 1
 			if remaining < 1 {
-				remaining = 1
+				remaining = 0
 			}
-			syn := Truncate(meta.Synopsis, width*remaining*2)
-			parts = append(parts, metaSynopsisStyle.Width(width-2).MaxHeight(remaining).Render(syn))
+			if remaining > 0 {
+				parts = append(parts, "")
+				syn := Truncate(meta.Synopsis, width*remaining*2)
+				parts = append(parts, metaSynopsisStyle.Width(width-2).MaxHeight(remaining).Render(syn))
+			}
 		}
 	}
 
