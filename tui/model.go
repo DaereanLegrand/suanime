@@ -38,9 +38,11 @@ type Model struct {
 	lastAnimeTitle string
 
 	scrollTick int
+	NoCover   bool
+	DaemonErr string
 }
 
-func NewModel(cfg Config) *Model {
+func NewModel(cfg Config, noCover bool) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "search anime..."
 	ti.CharLimit = 200
@@ -54,6 +56,7 @@ func NewModel(cfg Config) *Model {
 		activeTab: 0,
 		input:     ti,
 		dlManager: dlm,
+		NoCover:   noCover,
 	}
 }
 
@@ -129,7 +132,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("metadata: %v", msg.err)
 		} else {
 			m.jikanMeta = msg.meta
-			if msg.meta.ImageURL != "" && m.width > 0 {
+			if !m.NoCover && msg.meta.ImageURL != "" && m.width > 0 {
 				imgH := max(5, (m.height-5)/2)
 				if imgH > 30 {
 					imgH = 30
@@ -270,6 +273,8 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 	k := msg.String()
 
 	switch k {
+	case "q":
+		// handled by parent
 	case "up", "k":
 		if m.downCursor > 0 {
 			m.downCursor--
@@ -280,8 +285,10 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 		}
 	case "p":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
-			gid := items[m.downCursor].GID
-			if err := m.dlManager.Pause(gid); err != nil {
+			it := items[m.downCursor]
+			if it.Status == StatusPaused {
+				m.status = "already paused"
+			} else if err := m.dlManager.Pause(it.GID); err != nil {
 				m.status = fmt.Sprintf("pause err: %s", err)
 			} else {
 				m.status = "paused"
@@ -289,30 +296,19 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 		}
 	case "r":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
-			gid := items[m.downCursor].GID
-			if err := m.dlManager.Resume(gid); err != nil {
+			it := items[m.downCursor]
+			if it.Status != StatusPaused {
+				m.status = "not paused, nothing to resume"
+			} else if err := m.dlManager.Resume(it.GID); err != nil {
 				m.status = fmt.Sprintf("resume err: %s", err)
 			} else {
 				m.status = "resumed"
 			}
 		}
-	case "c":
+	case "R":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
-			gid := items[m.downCursor].GID
-			if err := m.dlManager.Cancel(gid); err != nil {
-				m.status = fmt.Sprintf("cancel err: %s", err)
-			} else {
-				m.status = "cancelled"
-				items = m.dlManager.GetItems()
-				if m.downCursor >= len(items) {
-					m.downCursor = max(0, len(items)-1)
-				}
-			}
-		}
-	case "d":
-		if m.downCursor >= 0 && m.downCursor < len(items) {
-			gid := items[m.downCursor].GID
-			if err := m.dlManager.Cancel(gid); err != nil {
+			it := items[m.downCursor]
+			if err := m.dlManager.RemoveFilesAndTorrent(it.GID); err != nil {
 				m.status = fmt.Sprintf("remove err: %s", err)
 			} else {
 				m.status = "removed"
@@ -387,7 +383,11 @@ func (m *Model) View() string {
 		content = m.downloadsView()
 	}
 
-	status := statusBarStyle.Width(w).Render(m.status)
+	statusLine := m.status
+	if m.DaemonErr != "" {
+		statusLine = badStyle.Render(m.DaemonErr)
+	}
+	status := statusBarStyle.Width(w).Render(statusLine)
 	help := helpBarStyle.Width(w).Render(strings.Join(m.helpKeys(), "  "))
 	footer := lipgloss.JoinVertical(lipgloss.Left, status, help)
 
@@ -429,7 +429,7 @@ func (m *Model) helpKeys() []string {
 	return []string{
 		accentStyle.Render("p") + " pause",
 		accentStyle.Render("r") + " resume",
-		accentStyle.Render("c") + " cancel",
+		accentStyle.Render("R") + " remove",
 		subtleStyle.Render("j/k") + " move",
 		subtleStyle.Render("tab") + " search",
 		subtleStyle.Render("q") + " quit",

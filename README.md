@@ -43,14 +43,17 @@ go build -ldflags="-X main.commit=$(git rev-parse --short HEAD)" -o suanime .
 
 - **Go** 1.22+
 - **aria2c** — `pacman -S aria2` | `apt install aria2` | `brew install aria2`
-- **kitty terminal** — required (native image display)
+- **kitty terminal** — required for cover art (use `--no-cover` otherwise)
 - **gum** (optional) — for `suanime get` interactive selection
 
 ## Usage
 
 ```bash
-# TUI (default)
+# TUI (default, requires kitty)
 ./suanime
+
+# TUI in any terminal (no cover art)
+./suanime --no-cover
 
 # CLI search — JSON to stdout
 ./suanime search "tokyo ghoul"

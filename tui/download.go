@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,6 +24,7 @@ const (
 	StatusFailed    = "failed"
 	StatusWaiting   = "waiting"
 	StatusSeeding   = "seeding"
+	StatusResuming  = "resuming"
 )
 
 type DownloadItem struct {
@@ -62,8 +64,6 @@ func (dm *DownloadManager) StartDaemon() error {
 
 	os.MkdirAll(dm.config.DownloadDir, 0755)
 	sessionFile := dm.sessionFile()
-	os.Remove(sessionFile)
-	os.Remove(sessionFile + "_old")
 
 	port := fmt.Sprintf("%d", dm.config.Aria2RPCPort)
 	args := []string{
@@ -71,7 +71,10 @@ func (dm *DownloadManager) StartDaemon() error {
 		"--rpc-listen-port=" + port,
 		"--rpc-allow-origin-all",
 		"--rpc-listen-all=false",
-		"--seed-ratio=2.0",
+		"--check-integrity=true",
+		"--continue=true",
+		"--auto-file-renaming=false",
+		"--seed-ratio=0.0",
 		"--summary-interval=0",
 		"--console-log-level=error",
 		"--file-allocation=none",
@@ -79,18 +82,29 @@ func (dm *DownloadManager) StartDaemon() error {
 		"--save-session-interval=10",
 		"--dir=" + dm.config.DownloadDir,
 	}
+	if _, err := os.Stat(sessionFile); err == nil {
+		args = append(args, "--input-file="+sessionFile)
+	}
 	if dm.config.Aria2RPCSecret != "" {
 		args = append(args, "--rpc-secret="+dm.config.Aria2RPCSecret)
 	}
+	var stderr bytes.Buffer
 	cmd := exec.Command("aria2c", args...)
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("aria2 daemon: %w", err)
 	}
 	dm.daemon = cmd
-	time.Sleep(500 * time.Millisecond)
-	return nil
+
+	for i := 0; i < 20; i++ {
+		time.Sleep(250 * time.Millisecond)
+		if _, err := dm.aria2.TellActive(); err == nil {
+			return nil
+		}
+	}
+	cmd.Process.Kill()
+	return fmt.Errorf("aria2 startup timeout: %s", strings.TrimSpace(stderr.String()))
 }
 
 func (dm *DownloadManager) killExistingAria2() {
@@ -146,18 +160,122 @@ func (dm *DownloadManager) FindGID(gid string) *DownloadItem {
 	return nil
 }
 
-func (dm *DownloadManager) Cancel(gid string) error {
+func (dm *DownloadManager) SyncFromAria2() {
+	dm.Poll()
+}
+
+func (dm *DownloadManager) RecoverOrphans() {
+	entries, err := os.ReadDir(dm.config.DownloadDir)
+	if err != nil {
+		return
+	}
+
+	dm.Poll()
+	knownDirs := map[string]bool{}
+	for _, d := range dm.items {
+		knownDirs[d.Name] = true
+		if d.Files != "" {
+			knownDirs[filepath.Base(filepath.Dir(d.Files))] = true
+		}
+		if strings.HasPrefix(d.Name, "torrent:") || (len(d.Name) >= 32 && !strings.Contains(d.Name, " ")) {
+			dm.mu.Lock()
+			for i, item := range dm.items {
+				if item.GID == d.GID {
+					dm.items = append(dm.items[:i], dm.items[i+1:]...)
+					break
+				}
+			}
+			dm.mu.Unlock()
+		}
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".aria2") {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".aria2")
+		if knownDirs[name] {
+			continue
+		}
+
+		hash, err := extractInfoHash(filepath.Join(dm.config.DownloadDir, entry.Name()))
+		if err != nil || hash == "" {
+			continue
+		}
+
+		magnet := providers.MagnetFromHash(hash, name)
+		gid, err := dm.aria2.AddURI(magnet, dm.config.DownloadDir)
+		if err != nil {
+			continue
+		}
+
+		dm.mu.Lock()
+		dm.items = append(dm.items, &DownloadItem{
+			GID:     gid,
+			Name:    name,
+			Magnet:  magnet,
+			Started: time.Now(),
+			Status:  StatusMeta,
+		})
+		dm.mu.Unlock()
+		knownDirs[name] = true
+	}
+}
+
+func extractInfoHash(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if len(data) < 30 {
+		return "", fmt.Errorf("file too short")
+	}
+	if data[8] == 0x00 && data[9] == 0x14 {
+		hash := fmt.Sprintf("%x", data[10:30])
+		return hash, nil
+	}
+	return "", fmt.Errorf("unknown aria2 format")
+}
+
+func (dm *DownloadManager) RemoveFilesAndTorrent(gid string) error {
 	dm.aria2.Remove(gid)
 	dm.aria2.ForceRemove(gid)
 	dm.aria2.RemoveResult(gid)
+
+	for i := 0; i < 5; i++ {
+		time.Sleep(500 * time.Millisecond)
+		dm.Poll()
+		found := false
+		for _, d := range dm.items {
+			if d.GID == gid {
+				found = true
+				dm.aria2.ForceRemove(d.GID)
+				dm.aria2.RemoveResult(d.GID)
+				break
+			}
+		}
+		if !found {
+			break
+		}
+	}
+
 	dm.mu.Lock()
-	defer dm.mu.Unlock()
 	for i, d := range dm.items {
 		if d.GID == gid {
+			if d.Files != "" {
+				dir := filepath.Dir(d.Files)
+				entries, _ := os.ReadDir(dir)
+				for _, e := range entries {
+					if strings.HasSuffix(e.Name(), ".aria2") {
+						os.Remove(filepath.Join(dir, e.Name()))
+					}
+				}
+			}
 			dm.items = append(dm.items[:i], dm.items[i+1:]...)
 			break
 		}
 	}
+	dm.mu.Unlock()
 	return nil
 }
 
@@ -172,6 +290,10 @@ func (dm *DownloadManager) Poll() {
 	active, errA := dm.aria2.TellActive()
 	waited, errW := dm.aria2.TellWaiting(0, 100)
 	stopped, errS := dm.aria2.TellStopped(0, 100)
+	if dm.daemon == nil || dm.daemon.Process == nil {
+		dm.RPCErr = "aria2 daemon not running"
+		return
+	}
 	if errA != nil || errW != nil || errS != nil {
 		dm.RPCErr = fmt.Sprintf("rpc: %v %v %v", errA, errW, errS)
 	} else {
@@ -221,10 +343,13 @@ func (dm *DownloadManager) Poll() {
 			}
 			existing.Status = dm.mapStatus(ts.Status, total, completed, existing)
 			updated = append(updated, existing)
-		} else if !(ts.Status == "complete" && total <= 100*1024 && completed <= 100*1024) {
+		} else if !(ts.Status == "complete" && total <= 1024*1024 && completed <= 1024*1024) {
 			name := btName
-			if name == "" {
-				name = ts.GID
+			if name == "" && dirName != "" && dirName != "." {
+				name = dirName
+			}
+			if name == "" || name == "." {
+				continue
 			}
 			item := &DownloadItem{
 				GID:       ts.GID,
@@ -251,15 +376,53 @@ func (dm *DownloadManager) Poll() {
 		}
 	}
 
-	gids := map[string]bool{}
 	deduped := updated[:0]
 	for _, d := range updated {
+		if isHashName(d.Name) && (d.Status == StatusCompleted || d.Status == StatusMeta) {
+			continue
+		}
+		deduped = append(deduped, d)
+	}
+	merged := mergeByName(deduped)
+	deduped = merged[:0]
+	for _, d := range merged {
+		deduped = append(deduped, d)
+	}
+
+	gids := map[string]bool{}
+	final := deduped[:0]
+	for _, d := range deduped {
 		if d.GID != "" && !gids[d.GID] {
 			gids[d.GID] = true
-			deduped = append(deduped, d)
+			final = append(final, d)
 		}
 	}
-	dm.items = deduped
+	dm.items = final
+}
+
+func mergeByName(items []*DownloadItem) []*DownloadItem {
+	if len(items) <= 1 {
+		return items
+	}
+	seen := map[string]*DownloadItem{}
+	for _, d := range items {
+		if d.Name == "" || isHashName(d.Name) {
+			seen[d.GID] = d
+			continue
+		}
+		if prev, ok := seen[d.Name]; ok {
+			if prev.TotalSize < d.TotalSize || (prev.Status == StatusMeta && d.Status != StatusMeta) {
+				seen[d.Name] = d
+			}
+		} else {
+			seen[d.Name] = d
+		}
+	}
+	out := make([]*DownloadItem, 0, len(seen))
+	for _, d := range seen {
+		out = append(out, d)
+	}
+	return out
 }
 
 func (dm *DownloadManager) findMatching(tsGID, btName, dirName string, total int64) *DownloadItem {
@@ -284,7 +447,7 @@ func (dm *DownloadManager) findMatching(tsGID, btName, dirName string, total int
 			}
 		}
 	}
-	if total > 100*1024 {
+	if total > 1024*1024 {
 		pending := 0
 		var last *DownloadItem
 		for _, d := range dm.items {
@@ -310,6 +473,9 @@ func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, 
 	switch ariaStatus {
 	case "active":
 		if total == 0 {
+			if completed > 0 {
+				return StatusResuming
+			}
 			return StatusMeta
 		}
 		if completed >= total && total > 0 {
@@ -322,8 +488,8 @@ func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, 
 		return StatusWaiting
 	case "complete":
 		if completed > 0 && total > 0 && completed >= total {
-			if total > 100*1024 || prevTotal > 100*1024 {
-				return StatusCompleted
+			if total > 1024*1024 || prevTotal > 1024*1024 {
+				return StatusSeeding
 			}
 			if prevStatus == StatusRunning || prevStatus == StatusCompleted || prevStatus == StatusSeeding {
 				return prevStatus
@@ -376,6 +542,11 @@ func (m *Model) downloadsView() string {
 				warnStyle.Render(strings.Repeat("░", barWidth)),
 				loadingStyle.Render("fetching metadata..."),
 			)
+		case StatusResuming:
+			statusLine = fmt.Sprintf("%s  %s",
+				warnStyle.Render(strings.Repeat("░", barWidth)),
+				accentStyle.Render("checking integrity..."),
+			)
 		case StatusRunning:
 			bar := progressBar(d.Progress, barWidth)
 			speedStr := ""
@@ -424,7 +595,7 @@ func (m *Model) downloadsView() string {
 			statusLine = fmt.Sprintf("%s  %s  %s  %s/s",
 				goodStyle.Render(bar),
 				goodStyle.Render(size),
-				accentStyle.Render("seeding (ratio 2.0)"),
+				accentStyle.Render("seeding"),
 				subtleStyle.Render(providers.FormatSize(d.Speed)),
 			)
 		case StatusFailed:
@@ -449,7 +620,7 @@ func (m *Model) downloadsView() string {
 	}
 
 	parts = append(parts, "")
-	parts = append(parts, mutedStyle.Render("p: pause  r: resume  c: cancel  d: remove  esc: back"))
+	parts = append(parts, mutedStyle.Render("p: pause  r: resume  R: remove files+torrent"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
@@ -480,6 +651,21 @@ func nameOverlap(a, b string) bool {
 			}
 		}
 		return match >= 2
+	}
+	return false
+}
+
+func isHashName(name string) bool {
+	if strings.HasPrefix(name, "torrent:") {
+		return true
+	}
+	if len(name) >= 32 && !strings.Contains(name, " ") && !strings.Contains(name, "[") {
+		for _, c := range name {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }

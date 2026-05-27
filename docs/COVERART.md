@@ -6,7 +6,8 @@ When viewing search results, the right half of the terminal displays cover art a
 
 ## Requirements
 
-- **Kitty terminal only**: The TUI refuses to start if not running in kitty (`$TERM=xterm-kitty` or `$KITTY_WINDOW_ID` set)
+- **Kitty terminal only by default**: The TUI refuses to start if not running in kitty (`$TERM=xterm-kitty` or `$KITTY_WINDOW_ID` set)
+- **`--no-cover` flag**: Skip cover art and work in any terminal. Metadata panel still shows all text info.
 - **Always-on 50/50 split**: Left pane = search results, right pane = cover art + metadata
 - **Jikan API v4**: Unofficial MyAnimeList API for anime metadata
 - **Kitty graphics protocol**: Native terminal image display via APC escape sequences
