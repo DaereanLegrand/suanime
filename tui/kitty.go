@@ -32,11 +32,16 @@ func kittyTTY() *os.File {
 func clearAllImages() {
 	tty := kittyTTY()
 	kittyMu.Lock()
-	fmt.Fprint(tty, "\033_Ga=d,d=A\033\\")
+	fmt.Fprint(tty, "\0337\033_Ga=d,d=A\033\\\0338")
 	kittyMu.Unlock()
 }
 
 func displayViaIcat(path string, col, row, widthCells, heightCells int) error {
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	fmt.Fprint(tty, "\0337")
 	place := fmt.Sprintf("%dx%d@%dx%d", widthCells, heightCells, col, row)
 	cmd := exec.Command("kitten", "icat",
 		"--silent",
@@ -45,14 +50,12 @@ func displayViaIcat(path string, col, row, widthCells, heightCells int) error {
 		"--place", place,
 		path,
 	)
-	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
-	if err != nil {
-		return err
-	}
 	cmd.Stdin = nil
 	cmd.Stdout = tty
 	cmd.Stderr = nil
-	return cmd.Run()
+	err = cmd.Run()
+	fmt.Fprint(tty, "\0338")
+	return err
 }
 
 func KittyShowCmd(url string, col, row, w, h int) tea.Cmd {
