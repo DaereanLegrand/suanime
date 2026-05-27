@@ -163,22 +163,27 @@ func (dm *DownloadManager) SyncFromAria2() {
 	dm.Poll()
 }
 
-func (dm *DownloadManager) Cancel(gid string) error {
-	return dm.aria2.Pause(gid)
-}
-
 func (dm *DownloadManager) RemoveFilesAndTorrent(gid string) error {
 	dm.aria2.Remove(gid)
 	dm.aria2.ForceRemove(gid)
 	dm.aria2.RemoveResult(gid)
 	dm.mu.Lock()
-	defer dm.mu.Unlock()
 	for i, d := range dm.items {
 		if d.GID == gid {
+			if d.Files != "" {
+				dir := filepath.Dir(d.Files)
+				entries, _ := os.ReadDir(dir)
+				for _, e := range entries {
+					if strings.HasSuffix(e.Name(), ".aria2") {
+						os.Remove(filepath.Join(dir, e.Name()))
+					}
+				}
+			}
 			dm.items = append(dm.items[:i], dm.items[i+1:]...)
 			break
 		}
 	}
+	dm.mu.Unlock()
 	return nil
 }
 
@@ -474,7 +479,7 @@ func (m *Model) downloadsView() string {
 	}
 
 	parts = append(parts, "")
-	parts = append(parts, mutedStyle.Render("p: pause  r: resume  c: cancel  R: remove"))
+	parts = append(parts, mutedStyle.Render("p: pause  r: resume  R: remove files+torrent"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

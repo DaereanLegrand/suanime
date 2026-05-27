@@ -80,7 +80,7 @@ func TestDownloadManager_AddAndPoll(t *testing.T) {
 		}
 	}
 
-	dm.Cancel(items[0].GID)
+	dm.Pause(items[0].GID)
 	time.Sleep(500 * time.Millisecond)
 	dm.Poll()
 	items = dm.GetItems()
@@ -149,9 +149,9 @@ func TestDownloadManager_PauseResumeCancel(t *testing.T) {
 		t.Logf("after resume: status=%s", items[0].Status)
 	}
 
-	err = dm.Cancel(gid)
+	err = dm.Pause(gid)
 	if err != nil {
-		t.Logf("cancel returned: %v", err)
+		t.Logf("pause returned: %v", err)
 	}
 
 	time.Sleep(500 * time.Millisecond)

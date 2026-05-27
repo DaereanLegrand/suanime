@@ -292,15 +292,6 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 				m.status = "resumed"
 			}
 		}
-	case "c":
-		if m.downCursor >= 0 && m.downCursor < len(items) {
-			gid := items[m.downCursor].GID
-			if err := m.dlManager.Cancel(gid); err != nil {
-				m.status = fmt.Sprintf("cancel err: %s", err)
-			} else {
-				m.status = "cancelled (session preserved, can resume)"
-			}
-		}
 	case "R":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
 			gid := items[m.downCursor].GID
@@ -424,7 +415,6 @@ func (m *Model) helpKeys() []string {
 	return []string{
 		accentStyle.Render("p") + " pause",
 		accentStyle.Render("r") + " resume",
-		accentStyle.Render("c") + " cancel",
 		accentStyle.Render("R") + " remove",
 		subtleStyle.Render("j/k") + " move",
 		subtleStyle.Render("tab") + " search",
