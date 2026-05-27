@@ -36,6 +36,15 @@ var (
 	inputStyle       = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(0, 1)
 	loadingStyle     = lipgloss.NewStyle().Foreground(warn).Bold(true)
 	errorStyle       = lipgloss.NewStyle().Foreground(bad)
+
+	metaTitleStyle   = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	metaLabelStyle   = lipgloss.NewStyle().Foreground(subtle)
+	metaValueStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#e5e7eb"))
+	metaScoreStyle   = lipgloss.NewStyle().Foreground(warn).Bold(true)
+	metaGenreStyle   = lipgloss.NewStyle().Foreground(muted)
+	metaSynopsisStyle = lipgloss.NewStyle().Foreground(muted).Width(40)
+	metaDivider      = lipgloss.NewStyle().Foreground(surface).Render("│")
+	metaPanelStyle   = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(surface)
 )
 
 func Navbar(tabs []string, active, width int) string {

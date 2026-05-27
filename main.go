@@ -332,6 +332,12 @@ func pickWithGum(candidates []*providers.AnimeTorrent) *providers.AnimeTorrent {
 }
 
 func runTUI() {
+	if !tui.IsKitty() {
+		fmt.Fprintf(os.Stderr, "suanime requires the kitty terminal.\n")
+		fmt.Fprintf(os.Stderr, "Current TERM: %s\n", os.Getenv("TERM"))
+		os.Exit(1)
+	}
+
 	cfg, err := tui.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)

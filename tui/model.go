@@ -32,6 +32,10 @@ type Model struct {
 
 	dlManager  *DownloadManager
 	downCursor int
+
+	jikanMeta      *AnimeMeta
+	jikanFetching  bool
+	lastAnimeTitle string
 }
 
 func NewModel(cfg Config) *Model {
@@ -57,6 +61,11 @@ func (m *Model) Init() tea.Cmd {
 
 type searchDoneMsg struct {
 	results []*providers.AnimeTorrent
+}
+
+type jikanResultMsg struct {
+	meta *AnimeMeta
+	err  error
 }
 
 type tickMsg time.Time
@@ -102,6 +111,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cursor = 0
 		m.searched = true
 		m.status = fmt.Sprintf("%d results", len(m.results))
+		m.jikanMeta = nil
+		m.jikanFetching = false
+		m.lastAnimeTitle = ""
+		if len(m.results) > 0 {
+			title := extractAnimeTitle(m.results[0].Name)
+			m.lastAnimeTitle = title
+			m.jikanFetching = true
+			return m, jikanFetchCmd(title)
+		}
+
+	case jikanResultMsg:
+		m.jikanFetching = false
+		if msg.err != nil {
+			m.status = fmt.Sprintf("metadata: %v", msg.err)
+		} else {
+			m.jikanMeta = msg.meta
+			if msg.meta.ImageURL != "" && m.width > 0 {
+				rightW := m.width/2 - 2
+				imgH := m.height / 3
+				kittyShowImageFromURL(msg.meta.ImageURL, m.width/2+1, 3, rightW, imgH)
+			}
+		}
 
 	case StatusMsg:
 		m.status = string(msg)
@@ -214,13 +245,13 @@ func (m *Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.cursor > 0 {
 			m.cursor--
 		}
-		return m, nil
+		return m, m.jikanCmd()
 
 	case "down", "j":
 		if m.cursor < len(m.results)-1 {
 			m.cursor++
 		}
-		return m, nil
+		return m, m.jikanCmd()
 	}
 
 	return m, nil
@@ -314,6 +345,27 @@ func openLink(link string) {
 	_ = cmd.Start()
 }
 
+func (m *Model) jikanCmd() tea.Cmd {
+	if m.cursor < 0 || m.cursor >= len(m.results) {
+		return nil
+	}
+	title := extractAnimeTitle(m.results[m.cursor].Name)
+	if title == m.lastAnimeTitle || title == "" {
+		return nil
+	}
+	m.lastAnimeTitle = title
+	m.jikanFetching = true
+	m.jikanMeta = nil
+	return jikanFetchCmd(title)
+}
+
+func jikanFetchCmd(title string) tea.Cmd {
+	return func() tea.Msg {
+		meta, err := jikanSearch(title)
+		return jikanResultMsg{meta: meta, err: err}
+	}
+}
+
 func (m *Model) View() string {
 	w := max(80, m.width)
 
@@ -376,61 +428,54 @@ func (m *Model) helpKeys() []string {
 }
 
 func (m *Model) searchView() string {
-	var parts []string
-
 	if m.input.Focused() {
-		parts = append(parts,
-			accentStyle.Bold(true).Render("Search"),
-			"",
-			inputStyle.Width(max(20, m.width-8)).Render(m.input.View()),
-			"",
-			subtleStyle.Render("type query and press enter"),
-		)
-		return lipgloss.JoinVertical(lipgloss.Left, parts...)
+		return m.inputView()
 	}
-
 	if m.loading {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			accentStyle.Bold(true).Render("Search"),
-			"",
-			loadingStyle.Render("searching..."),
-		)
+		return m.centeredView("searching...")
 	}
-
 	if m.err != "" && len(m.results) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			accentStyle.Bold(true).Render("Search"),
-			"",
-			errorStyle.Render(m.err),
-			"",
-			subtleStyle.Render("press / to search again"),
-		)
+		return m.centeredView(m.err + "\n\npress / to search again")
 	}
-
 	if !m.searched {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			accentStyle.Bold(true).Render("Search"),
-			"",
-			subtleStyle.Render("press / to search"),
-		)
+		return m.centeredView("press / to search")
 	}
-
 	if len(m.results) == 0 {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			accentStyle.Bold(true).Render("Search"),
-			"",
-			mutedStyle.Render("no results found"),
-			"",
-			subtleStyle.Render("press / to search again"),
-		)
+		return m.centeredView("no results found\n\npress / to search again")
 	}
 
-	parts = append(parts, accentStyle.Bold(true).Render("Search"))
-	parts = append(parts, "")
+	leftW := m.width / 2
+	rightW := m.width - leftW - 1
 
-	headerFmt := "  %-3s %-4s %-9s %-15s %s"
-	header := fmt.Sprintf(headerFmt, "", "Ep", "Size", "Peers", "Title")
-	parts = append(parts, mutedStyle.Render(header))
+	left := m.resultsList(leftW)
+	right := m.metaPanel(rightW)
+
+	divider := metaDivider
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, divider, right)
+}
+
+func (m *Model) inputView() string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		accentStyle.Bold(true).Render("Search"),
+		"",
+		inputStyle.Width(max(20, m.width-8)).Render(m.input.View()),
+		"",
+		subtleStyle.Render("type query and press enter"),
+	)
+}
+
+func (m *Model) centeredView(msg string) string {
+	return lipgloss.JoinVertical(lipgloss.Left,
+		accentStyle.Bold(true).Render("Search"),
+		"",
+		msg,
+	)
+}
+
+func (m *Model) resultsList(width int) string {
+	var parts []string
+	parts = append(parts, accentStyle.Bold(true).Render("Results"))
+	parts = append(parts, mutedStyle.Render(fmt.Sprintf("  %-3s %-4s %-9s %s", "", "Ep", "Size", "Title")))
 
 	visible := max(3, m.height-12)
 	start := m.cursor - visible/2
@@ -463,22 +508,93 @@ func (m *Model) searchView() string {
 		}
 
 		peers := FormatPeers(t.Seeders, t.Leechers)
-
-		titleWidth := max(30, m.width-44)
+		titleWidth := max(20, width-30)
 		title := Truncate(t.Name, titleWidth)
 
-		provider := subtleStyle.Render(fmt.Sprintf("[%s]", t.Provider))
-
-		line := fmt.Sprintf("%s %s  %-9s  %-15s  %s %s",
-			marker, ep, size, peers, title, provider,
+		line := fmt.Sprintf("%s %s  %-9s  %s  %s  %s",
+			marker, ep, size, peers, title, subtleStyle.Render(fmt.Sprintf("[%s]", t.Provider)),
 		)
 
 		if i == m.cursor {
-			parts = append(parts, selectedStyle.Width(m.width-2).Render(line))
+			parts = append(parts, selectedStyle.Width(width-2).Render(line))
 		} else {
-			parts = append(parts, normalStyle.Render(line))
+			parts = append(parts, mutedStyle.Render(line))
 		}
 	}
-
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+func (m *Model) metaPanel(width int) string {
+	if m.jikanFetching {
+		return metaPanelStyle.Width(width).Render(
+			lipgloss.JoinVertical(lipgloss.Left,
+				accentStyle.Bold(true).Render("Info"),
+				"",
+				loadingStyle.Render("fetching..."),
+			),
+		)
+	}
+	if m.jikanMeta == nil {
+		kittyClearImage()
+		return metaPanelStyle.Width(width).Render(
+			lipgloss.JoinVertical(lipgloss.Left,
+				accentStyle.Bold(true).Render("Info"),
+				"",
+				subtleStyle.Render("no metadata"),
+			),
+		)
+	}
+
+	meta := m.jikanMeta
+	var parts []string
+
+	parts = append(parts, accentStyle.Bold(true).Render("Info"))
+	parts = append(parts, "")
+
+	if meta.TitleEng != "" && meta.TitleEng != meta.Title {
+		parts = append(parts, metaTitleStyle.Render(Truncate(meta.TitleEng, width-2)))
+	}
+	parts = append(parts, metaTitleStyle.Render(Truncate(meta.Title, width-2)))
+
+	scoreStr := fmt.Sprintf("★ %.2f", meta.Score)
+	parts = append(parts, fmt.Sprintf("%s  %s  %s",
+		metaScoreStyle.Render(scoreStr),
+		metaValueStyle.Render(fmt.Sprintf("%d", meta.Year)),
+		metaValueStyle.Render(meta.Type),
+	))
+
+	if meta.Rank > 0 {
+		parts = append(parts, fmt.Sprintf("Rank: %s  Popularity: %s",
+			metaValueStyle.Render(fmt.Sprintf("#%d", meta.Rank)),
+			metaValueStyle.Render(fmt.Sprintf("#%d", meta.Popularity)),
+		))
+	}
+	if meta.Episodes > 0 {
+		parts = append(parts, fmt.Sprintf("%s episodes  %s",
+			metaValueStyle.Render(fmt.Sprintf("%d", meta.Episodes)),
+			metaValueStyle.Render(meta.Status),
+		))
+	}
+
+	if len(meta.Genres) > 0 {
+		genres := make([]string, len(meta.Genres))
+		for i, g := range meta.Genres {
+			genres[i] = metaGenreStyle.Render(g)
+		}
+		parts = append(parts, strings.Join(genres, " · "))
+	}
+
+	if len(meta.Studios) > 0 {
+		parts = append(parts, metaLabelStyle.Render(strings.Join(meta.Studios, ", ")))
+	}
+
+	if meta.Synopsis != "" {
+		parts = append(parts, "")
+		syn := Truncate(meta.Synopsis, width*6)
+		parts = append(parts, metaSynopsisStyle.Width(width-2).Render(syn))
+	}
+
+	return metaPanelStyle.Width(width).Render(
+		lipgloss.JoinVertical(lipgloss.Left, parts...),
+	)
 }
