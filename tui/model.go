@@ -135,8 +135,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					imgH = 20
 				}
 				col := m.width/2 + 1
-				row := 2
-				cmds = append(cmds, KittyShowCmd(msg.meta.ImageURL, col, row, rightW, imgH))
+				cmds = append(cmds, KittyShowCmd(msg.meta.ImageURL, col, 2, rightW, imgH))
 			}
 		}
 
@@ -362,6 +361,7 @@ func (m *Model) jikanCmd() tea.Cmd {
 	m.lastAnimeTitle = title
 	m.jikanFetching = true
 	m.jikanMeta = nil
+	clearAllImages()
 	return jikanFetchCmd(title)
 }
 
@@ -456,10 +456,9 @@ func (m *Model) searchView() string {
 	if contentH < 5 {
 		contentH = 5
 	}
-	imgH := max(5, contentH/3)
 
 	left := m.resultsList(leftW, contentH)
-	right := m.metaPanel(rightW, contentH, imgH)
+	right := m.metaPanel(rightW, contentH)
 
 	divider := metaDivider
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, divider, right)
@@ -540,19 +539,14 @@ func (m *Model) resultsList(width int, maxH int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-func (m *Model) metaPanel(width int, maxH int, imgH int) string {
+func (m *Model) metaPanel(width int, maxH int) string {
 	var parts []string
-
-	for i := 0; i < imgH; i++ {
-		parts = append(parts, "")
-	}
 
 	if m.jikanFetching {
 		parts = append(parts, accentStyle.Bold(true).Render("Info"))
 		parts = append(parts, "")
 		parts = append(parts, loadingStyle.Render("fetching..."))
 	} else if m.jikanMeta == nil {
-		kittyClearImage()
 		parts = append(parts, accentStyle.Bold(true).Render("Info"))
 		parts = append(parts, "")
 		parts = append(parts, subtleStyle.Render("no metadata"))

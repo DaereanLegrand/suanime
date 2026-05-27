@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,7 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var kittySeqMu sync.Mutex
+var kittyMu sync.Mutex
 
 func IsKitty() bool {
 	return os.Getenv("TERM") == "xterm-kitty" || os.Getenv("KITTY_WINDOW_ID") != ""
@@ -22,77 +21,37 @@ func IsKitty() bool {
 
 func Cleanup() {}
 
-func runIcat(path string, col, row, widthCells, heightCells int) error {
-	// kitten icat --stdin no --transfer-mode file
-	//   --place "${w}x${h}@${x}x${y}" "$file" < /dev/null > /dev/tty
-	place := fmt.Sprintf("%dx%d@%dx%d", widthCells, heightCells, col, row)
+func kittyTTY() *os.File {
+	f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return os.Stderr
+	}
+	return f
+}
 
+func clearAllImages() {
+	tty := kittyTTY()
+	kittyMu.Lock()
+	fmt.Fprint(tty, "\033_Ga=d,d=A\033\\")
+	kittyMu.Unlock()
+}
+
+func displayViaIcat(path string, col, row, widthCells, heightCells int) error {
+	place := fmt.Sprintf("%dx%d@%dx%d", widthCells, heightCells, col, row)
 	cmd := exec.Command("kitten", "icat",
 		"--stdin", "no",
 		"--transfer-mode", "file",
 		"--place", place,
 		path,
 	)
-
 	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
-
 	cmd.Stdin = nil
 	cmd.Stdout = tty
 	cmd.Stderr = tty
 	return cmd.Run()
-}
-
-var nextImageID int
-var displayedImageID int
-var ttyFd *os.File
-
-func kittyTTY() *os.File {
-	if ttyFd != nil {
-		return ttyFd
-	}
-	f, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
-	if err != nil {
-		f = os.Stderr
-	}
-	ttyFd = f
-	return f
-}
-
-func clearViaEscape() {
-	kittySeqMu.Lock()
-	defer kittySeqMu.Unlock()
-	if displayedImageID > 0 {
-		fmt.Fprintf(kittyTTY(), "\033_Ga=d,d=I,i=%d\033\\", displayedImageID)
-		displayedImageID = 0
-	}
-}
-
-func clearAllViaEscape() {
-	kittySeqMu.Lock()
-	defer kittySeqMu.Unlock()
-	if displayedImageID > 0 {
-		fmt.Fprintf(kittyTTY(), "\033_Ga=d,d=I,i=%d\033\\", displayedImageID)
-		displayedImageID = 0
-	}
-	// clear all just in case
-	fmt.Fprint(kittyTTY(), "\033_Ga=d,d=A\033\\")
-}
-
-func kittyShowImage(path string, col, row, widthCells, heightCells int) error {
-	if err := runIcat(path, col, row, widthCells, heightCells); err != nil {
-		if errors.Is(err, exec.ErrNotFound) {
-			return fmt.Errorf("kitten not found; %w", err)
-		}
-		return err
-	}
-	return nil
-}
-
-func kittyClearImage() {
-	clearAllViaEscape()
 }
 
 func KittyShowCmd(url string, col, row, w, h int) tea.Cmd {
@@ -124,7 +83,8 @@ func KittyShowCmd(url string, col, row, w, h int) tea.Cmd {
 			os.WriteFile(cachePath, data, 0644)
 		}
 
-		if err := kittyShowImage(cachePath, col, row, w, h); err != nil {
+		clearAllImages()
+		if err := displayViaIcat(cachePath, col, row, w, h); err != nil {
 			return ErrMsg(fmt.Sprintf("image: %v", err))
 		}
 		return nil
