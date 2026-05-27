@@ -338,6 +338,8 @@ func runTUI() {
 		os.Exit(1)
 	}
 
+	defer tui.Cleanup()
+
 	cfg, err := tui.LoadConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
