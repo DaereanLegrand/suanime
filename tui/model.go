@@ -36,9 +36,11 @@ type Model struct {
 	jikanMeta      *AnimeMeta
 	jikanFetching  bool
 	lastAnimeTitle string
+
+	NoCover bool
 }
 
-func NewModel(cfg Config) *Model {
+func NewModel(cfg Config, noCover bool) *Model {
 	ti := textinput.New()
 	ti.Placeholder = "search anime..."
 	ti.CharLimit = 200
@@ -52,6 +54,7 @@ func NewModel(cfg Config) *Model {
 		activeTab: 0,
 		input:     ti,
 		dlManager: dlm,
+		NoCover:   noCover,
 	}
 }
 
@@ -127,7 +130,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("metadata: %v", msg.err)
 		} else {
 			m.jikanMeta = msg.meta
-			if msg.meta.ImageURL != "" && m.width > 0 {
+			if !m.NoCover && msg.meta.ImageURL != "" && m.width > 0 {
 				rightW := m.width/2 - 2
 				imgH := m.height / 3
 				kittyShowImageFromURL(msg.meta.ImageURL, m.width/2+1, 3, rightW, imgH)
@@ -535,7 +538,9 @@ func (m *Model) metaPanel(width int) string {
 		)
 	}
 	if m.jikanMeta == nil {
-		kittyClearImage()
+		if !m.NoCover {
+			kittyClearImage()
+		}
 		return metaPanelStyle.Width(width).Render(
 			lipgloss.JoinVertical(lipgloss.Left,
 				accentStyle.Bold(true).Render("Info"),

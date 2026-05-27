@@ -21,6 +21,8 @@ var (
 	commit  = "dev"
 )
 
+var noCover bool
+
 func main() {
 	args := os.Args[1:]
 
@@ -29,13 +31,27 @@ func main() {
 		return
 	}
 
-	switch args[0] {
+	var filtered []string
+	for _, a := range args {
+		if a == "--no-cover" {
+			noCover = true
+			continue
+		}
+		filtered = append(filtered, a)
+	}
+
+	if len(filtered) == 0 {
+		runTUI()
+		return
+	}
+
+	switch filtered[0] {
 	case "tui":
 		runTUI()
 	case "search":
-		runSearch(args[1:])
+		runSearch(filtered[1:])
 	case "get":
-		runGet(args[1:])
+		runGet(filtered[1:])
 	case "version", "--version", "-v":
 		fmt.Printf("suanime %s (%s)\n", version, commit)
 	case "--help", "-h", "help":
@@ -49,20 +65,22 @@ func main() {
 
 func printHelp() {
 	fmt.Printf("suanime %s (%s) - anime torrent search & download\n\n", version, commit)
-	fmt.Println(`
-
-Usage:
-  suanime                  Launch TUI
-  suanime tui              Launch TUI
-  suanime search <query>   Search torrents (JSON output)
-  suanime get <query>      Search and download
+	fmt.Println(`Usage:
+  suanime [--no-cover]               Launch TUI
+  suanime [--no-cover] tui           Launch TUI
+  suanime search <query>             Search torrents (JSON output)
+  suanime get <query>                Search and download
                            --ep N         Filter by episode
                            --resolution R Filter by resolution (720p,1080p)
                            --no-batch     Exclude batch releases
                            --best         Auto-pick best match
-  suanime version          Print version
+  suanime version                    Print version
+
+Flags:
+  --no-cover   Skip cover art (works in any terminal, not just kitty)
 
 Examples:
+  suanime --no-cover
   suanime search "tokyo ghoul"
   suanime get "tokyo ghoul" --ep 1 --best
   suanime get "tokyo ghoul" --ep 1 --resolution 1080p --no-batch --best
@@ -332,8 +350,8 @@ func pickWithGum(candidates []*providers.AnimeTorrent) *providers.AnimeTorrent {
 }
 
 func runTUI() {
-	if !tui.IsKitty() {
-		fmt.Fprintf(os.Stderr, "suanime requires the kitty terminal.\n")
+	if !noCover && !tui.IsKitty() {
+		fmt.Fprintf(os.Stderr, "suanime requires the kitty terminal (use --no-cover to skip cover art).\n")
 		fmt.Fprintf(os.Stderr, "Current TERM: %s\n", os.Getenv("TERM"))
 		os.Exit(1)
 	}
@@ -351,7 +369,7 @@ func runTUI() {
 
 	os.MkdirAll(cfg.DownloadDir, 0755)
 
-	m := tui.NewModel(cfg)
+	m := tui.NewModel(cfg, noCover)
 	dm := m.DownloadManager()
 
 	if err := dm.StartDaemon(); err != nil {
