@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -82,15 +83,23 @@ func (dm *DownloadManager) StartDaemon() error {
 	if dm.config.Aria2RPCSecret != "" {
 		args = append(args, "--rpc-secret="+dm.config.Aria2RPCSecret)
 	}
+	var stderr bytes.Buffer
 	cmd := exec.Command("aria2c", args...)
 	cmd.Stdout = nil
-	cmd.Stderr = nil
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("aria2 daemon: %w", err)
 	}
 	dm.daemon = cmd
-	time.Sleep(500 * time.Millisecond)
-	return nil
+
+	for i := 0; i < 20; i++ {
+		time.Sleep(250 * time.Millisecond)
+		if _, err := dm.aria2.TellActive(); err == nil {
+			return nil
+		}
+	}
+	cmd.Process.Kill()
+	return fmt.Errorf("aria2 startup timeout: %s", strings.TrimSpace(stderr.String()))
 }
 
 func (dm *DownloadManager) killExistingAria2() {
@@ -172,6 +181,10 @@ func (dm *DownloadManager) Poll() {
 	active, errA := dm.aria2.TellActive()
 	waited, errW := dm.aria2.TellWaiting(0, 100)
 	stopped, errS := dm.aria2.TellStopped(0, 100)
+	if dm.daemon == nil || dm.daemon.Process == nil {
+		dm.RPCErr = "aria2 daemon not running"
+		return
+	}
 	if errA != nil || errW != nil || errS != nil {
 		dm.RPCErr = fmt.Sprintf("rpc: %v %v %v", errA, errW, errS)
 	} else {

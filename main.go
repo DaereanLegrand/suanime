@@ -373,7 +373,7 @@ func runTUI() {
 	dm := m.DownloadManager()
 
 	if err := dm.StartDaemon(); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: aria2 daemon: %v\n", err)
+		m.DaemonErr = fmt.Sprintf("aria2: %v", err)
 	}
 	defer dm.StopDaemon()
 

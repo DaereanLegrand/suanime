@@ -37,7 +37,8 @@ type Model struct {
 	jikanFetching  bool
 	lastAnimeTitle string
 
-	NoCover bool
+	NoCover   bool
+	DaemonErr string
 }
 
 func NewModel(cfg Config, noCover bool) *Model {
@@ -381,7 +382,11 @@ func (m *Model) View() string {
 		content = m.downloadsView()
 	}
 
-	status := statusBarStyle.Width(w).Render(m.status)
+	statusLine := m.status
+	if m.DaemonErr != "" {
+		statusLine = badStyle.Render(m.DaemonErr)
+	}
+	status := statusBarStyle.Width(w).Render(statusLine)
 	help := helpBarStyle.Width(w).Render(strings.Join(m.helpKeys(), "  "))
 	footer := lipgloss.JoinVertical(lipgloss.Left, status, help)
 
