@@ -24,6 +24,7 @@ const (
 	StatusFailed    = "failed"
 	StatusWaiting   = "waiting"
 	StatusSeeding   = "seeding"
+	StatusResuming  = "resuming"
 )
 
 type DownloadItem struct {
@@ -71,6 +72,8 @@ func (dm *DownloadManager) StartDaemon() error {
 		"--rpc-allow-origin-all",
 		"--rpc-listen-all=false",
 		"--check-integrity=true",
+		"--continue=true",
+		"--auto-file-renaming=false",
 		"--seed-ratio=0.0",
 		"--summary-interval=0",
 		"--console-log-level=error",
@@ -342,11 +345,11 @@ func (dm *DownloadManager) Poll() {
 			updated = append(updated, existing)
 		} else if !(ts.Status == "complete" && total <= 1024*1024 && completed <= 1024*1024) {
 			name := btName
-			if name == "" && dirName != "" {
+			if name == "" && dirName != "" && dirName != "." {
 				name = dirName
 			}
-			if name == "" {
-				name = "torrent:" + ts.GID[:12]
+			if name == "" || name == "." {
+				continue
 			}
 			item := &DownloadItem{
 				GID:       ts.GID,
@@ -470,6 +473,9 @@ func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, 
 	switch ariaStatus {
 	case "active":
 		if total == 0 {
+			if completed > 0 {
+				return StatusResuming
+			}
 			return StatusMeta
 		}
 		if completed >= total && total > 0 {
@@ -535,6 +541,11 @@ func (m *Model) downloadsView() string {
 			statusLine = fmt.Sprintf("%s  %s",
 				warnStyle.Render(strings.Repeat("░", barWidth)),
 				loadingStyle.Render("fetching metadata..."),
+			)
+		case StatusResuming:
+			statusLine = fmt.Sprintf("%s  %s",
+				warnStyle.Render(strings.Repeat("░", barWidth)),
+				accentStyle.Render("checking integrity..."),
 			)
 		case StatusRunning:
 			bar := progressBar(d.Progress, barWidth)
