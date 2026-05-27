@@ -200,21 +200,6 @@ func (dm *DownloadManager) RecoverOrphans() {
 			continue
 		}
 
-		dirPath := filepath.Join(dm.config.DownloadDir, name)
-		if info, err := os.Stat(dirPath); err == nil && info.IsDir() {
-			entries, _ := os.ReadDir(dirPath)
-			complete := true
-			for _, e := range entries {
-				if strings.HasSuffix(e.Name(), ".aria2") {
-					complete = false
-					break
-				}
-			}
-			if complete {
-				continue
-			}
-		}
-
 		magnet := providers.MagnetFromHash(hash, name)
 		gid, err := dm.aria2.AddURI(magnet, dm.config.DownloadDir)
 		if err != nil {
@@ -395,19 +380,10 @@ func (dm *DownloadManager) Poll() {
 		}
 		deduped = append(deduped, d)
 	}
-	for i := len(deduped) - 1; i >= 0; i-- {
-		for j := i - 1; j >= 0; j-- {
-			if deduped[i].Name != "" && deduped[j].Name != "" &&
-				deduped[i].Name == deduped[j].Name &&
-				deduped[i].GID != deduped[j].GID {
-				if deduped[j].TotalSize > deduped[i].TotalSize {
-					deduped = append(deduped[:i], deduped[i+1:]...)
-				} else {
-					deduped = append(deduped[:j], deduped[j+1:]...)
-				}
-				break
-			}
-		}
+	merged := mergeByName(deduped)
+	deduped = merged[:0]
+	for _, d := range merged {
+		deduped = append(deduped, d)
 	}
 
 	gids := map[string]bool{}
@@ -419,6 +395,31 @@ func (dm *DownloadManager) Poll() {
 		}
 	}
 	dm.items = final
+}
+
+func mergeByName(items []*DownloadItem) []*DownloadItem {
+	if len(items) <= 1 {
+		return items
+	}
+	seen := map[string]*DownloadItem{}
+	for _, d := range items {
+		if d.Name == "" || isHashName(d.Name) {
+			seen[d.GID] = d
+			continue
+		}
+		if prev, ok := seen[d.Name]; ok {
+			if prev.TotalSize < d.TotalSize || (prev.Status == StatusMeta && d.Status != StatusMeta) {
+				seen[d.Name] = d
+			}
+		} else {
+			seen[d.Name] = d
+		}
+	}
+	out := make([]*DownloadItem, 0, len(seen))
+	for _, d := range seen {
+		out = append(out, d)
+	}
+	return out
 }
 
 func (dm *DownloadManager) findMatching(tsGID, btName, dirName string, total int64) *DownloadItem {
@@ -482,7 +483,7 @@ func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, 
 	case "complete":
 		if completed > 0 && total > 0 && completed >= total {
 			if total > 1024*1024 || prevTotal > 1024*1024 {
-				return StatusCompleted
+				return StatusSeeding
 			}
 			if prevStatus == StatusRunning || prevStatus == StatusCompleted || prevStatus == StatusSeeding {
 				return prevStatus
