@@ -522,7 +522,7 @@ func (m *Model) resultsList(width int, maxH int) string {
 		}
 
 		peers := FormatPeers(t.Seeders, t.Leechers)
-		titleMax := width - 48
+		titleMax := width - 50
 		if titleMax < 8 {
 			titleMax = 8
 		}
@@ -550,7 +550,7 @@ func (m *Model) resultsList(width int, maxH int) string {
 		)
 
 		if i == m.cursor {
-			parts = append(parts, selectedStyle.Width(width-2).Render(line))
+			parts = append(parts, selectedStyle.Render(line))
 		} else {
 			parts = append(parts, mutedStyle.Render(line))
 		}
@@ -619,7 +619,7 @@ func (m *Model) metaPanel(width int, maxH int) string {
 				syn := strings.ReplaceAll(meta.Synopsis, "\n", " ")
 				syn = strings.ReplaceAll(syn, "\r", "")
 				syn = Truncate(syn, width*remaining*2)
-				synRendered := metaSynopsisStyle.Width(width - 4).MaxHeight(remaining).Render(syn)
+				synRendered := metaSynopsisStyle.Width(width - 6).MaxHeight(remaining).Render(syn)
 				for _, synLine := range strings.Split(synRendered, "\n") {
 					parts = append(parts, synLine)
 				}
