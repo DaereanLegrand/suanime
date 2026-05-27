@@ -39,6 +39,7 @@ func clearAllImages() {
 func displayViaIcat(path string, col, row, widthCells, heightCells int) error {
 	place := fmt.Sprintf("%dx%d@%dx%d", widthCells, heightCells, col, row)
 	cmd := exec.Command("kitten", "icat",
+		"--silent",
 		"--stdin", "no",
 		"--transfer-mode", "file",
 		"--place", place,
@@ -50,7 +51,7 @@ func displayViaIcat(path string, col, row, widthCells, heightCells int) error {
 	}
 	cmd.Stdin = nil
 	cmd.Stdout = tty
-	cmd.Stderr = tty
+	cmd.Stderr = nil
 	return cmd.Run()
 }
 
