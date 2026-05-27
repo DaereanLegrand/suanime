@@ -168,9 +168,22 @@ func (dm *DownloadManager) RecoverOrphans() {
 	}
 
 	dm.Poll()
-	known := map[string]bool{}
+	knownDirs := map[string]bool{}
 	for _, d := range dm.items {
-		known[d.Name] = true
+		knownDirs[d.Name] = true
+		if d.Files != "" {
+			knownDirs[filepath.Base(filepath.Dir(d.Files))] = true
+		}
+		if strings.HasPrefix(d.Name, "torrent:") || (len(d.Name) >= 32 && !strings.Contains(d.Name, " ")) {
+			dm.mu.Lock()
+			for i, item := range dm.items {
+				if item.GID == d.GID {
+					dm.items = append(dm.items[:i], dm.items[i+1:]...)
+					break
+				}
+			}
+			dm.mu.Unlock()
+		}
 	}
 
 	for _, entry := range entries {
@@ -178,7 +191,7 @@ func (dm *DownloadManager) RecoverOrphans() {
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".aria2")
-		if known[name] {
+		if knownDirs[name] {
 			continue
 		}
 
@@ -187,8 +200,22 @@ func (dm *DownloadManager) RecoverOrphans() {
 			continue
 		}
 
-		magnet := providers.MagnetFromHash(hash, name)
+		dirPath := filepath.Join(dm.config.DownloadDir, name)
+		if info, err := os.Stat(dirPath); err == nil && info.IsDir() {
+			entries, _ := os.ReadDir(dirPath)
+			complete := true
+			for _, e := range entries {
+				if strings.HasSuffix(e.Name(), ".aria2") {
+					complete = false
+					break
+				}
+			}
+			if complete {
+				continue
+			}
+		}
 
+		magnet := providers.MagnetFromHash(hash, name)
 		gid, err := dm.aria2.AddURI(magnet, dm.config.DownloadDir)
 		if err != nil {
 			continue
@@ -203,6 +230,7 @@ func (dm *DownloadManager) RecoverOrphans() {
 			Status:  StatusMeta,
 		})
 		dm.mu.Unlock()
+		knownDirs[name] = true
 	}
 }
 
@@ -360,15 +388,37 @@ func (dm *DownloadManager) Poll() {
 		}
 	}
 
-	gids := map[string]bool{}
 	deduped := updated[:0]
 	for _, d := range updated {
-		if d.GID != "" && !gids[d.GID] {
-			gids[d.GID] = true
-			deduped = append(deduped, d)
+		if isHashName(d.Name) && (d.Status == StatusCompleted || d.Status == StatusMeta) {
+			continue
+		}
+		deduped = append(deduped, d)
+	}
+	for i := len(deduped) - 1; i >= 0; i-- {
+		for j := i - 1; j >= 0; j-- {
+			if deduped[i].Name != "" && deduped[j].Name != "" &&
+				deduped[i].Name == deduped[j].Name &&
+				deduped[i].GID != deduped[j].GID {
+				if deduped[j].TotalSize > deduped[i].TotalSize {
+					deduped = append(deduped[:i], deduped[i+1:]...)
+				} else {
+					deduped = append(deduped[:j], deduped[j+1:]...)
+				}
+				break
+			}
 		}
 	}
-	dm.items = deduped
+
+	gids := map[string]bool{}
+	final := deduped[:0]
+	for _, d := range deduped {
+		if d.GID != "" && !gids[d.GID] {
+			gids[d.GID] = true
+			final = append(final, d)
+		}
+	}
+	dm.items = final
 }
 
 func (dm *DownloadManager) findMatching(tsGID, btName, dirName string, total int64) *DownloadItem {
@@ -589,6 +639,21 @@ func nameOverlap(a, b string) bool {
 			}
 		}
 		return match >= 2
+	}
+	return false
+}
+
+func isHashName(name string) bool {
+	if strings.HasPrefix(name, "torrent:") {
+		return true
+	}
+	if len(name) >= 32 && !strings.Contains(name, " ") && !strings.Contains(name, "[") {
+		for _, c := range name {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
