@@ -266,6 +266,8 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 	k := msg.String()
 
 	switch k {
+	case "q":
+		// handled by parent
 	case "up", "k":
 		if m.downCursor > 0 {
 			m.downCursor--
@@ -276,8 +278,10 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 		}
 	case "p":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
-			gid := items[m.downCursor].GID
-			if err := m.dlManager.Pause(gid); err != nil {
+			it := items[m.downCursor]
+			if it.Status == StatusPaused {
+				m.status = "already paused"
+			} else if err := m.dlManager.Pause(it.GID); err != nil {
 				m.status = fmt.Sprintf("pause err: %s", err)
 			} else {
 				m.status = "paused"
@@ -285,8 +289,10 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 		}
 	case "r":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
-			gid := items[m.downCursor].GID
-			if err := m.dlManager.Resume(gid); err != nil {
+			it := items[m.downCursor]
+			if it.Status != StatusPaused {
+				m.status = "not paused, nothing to resume"
+			} else if err := m.dlManager.Resume(it.GID); err != nil {
 				m.status = fmt.Sprintf("resume err: %s", err)
 			} else {
 				m.status = "resumed"
@@ -294,11 +300,11 @@ func (m *Model) handleDownloadKeys(msg tea.KeyMsg) {
 		}
 	case "R":
 		if m.downCursor >= 0 && m.downCursor < len(items) {
-			gid := items[m.downCursor].GID
-			if err := m.dlManager.RemoveFilesAndTorrent(gid); err != nil {
+			it := items[m.downCursor]
+			if err := m.dlManager.RemoveFilesAndTorrent(it.GID); err != nil {
 				m.status = fmt.Sprintf("remove err: %s", err)
 			} else {
-				m.status = "removed (files deleted)"
+				m.status = "removed"
 				items = m.dlManager.GetItems()
 				if m.downCursor >= len(items) {
 					m.downCursor = max(0, len(items)-1)

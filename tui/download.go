@@ -225,6 +225,24 @@ func (dm *DownloadManager) RemoveFilesAndTorrent(gid string) error {
 	dm.aria2.Remove(gid)
 	dm.aria2.ForceRemove(gid)
 	dm.aria2.RemoveResult(gid)
+
+	for i := 0; i < 5; i++ {
+		time.Sleep(500 * time.Millisecond)
+		dm.Poll()
+		found := false
+		for _, d := range dm.items {
+			if d.GID == gid {
+				found = true
+				dm.aria2.ForceRemove(d.GID)
+				dm.aria2.RemoveResult(d.GID)
+				break
+			}
+		}
+		if !found {
+			break
+		}
+	}
+
 	dm.mu.Lock()
 	for i, d := range dm.items {
 		if d.GID == gid {
@@ -309,10 +327,13 @@ func (dm *DownloadManager) Poll() {
 			}
 			existing.Status = dm.mapStatus(ts.Status, total, completed, existing)
 			updated = append(updated, existing)
-		} else if !(ts.Status == "complete" && total <= 100*1024 && completed <= 100*1024) {
+		} else if !(ts.Status == "complete" && total <= 1024*1024 && completed <= 1024*1024) {
 			name := btName
+			if name == "" && dirName != "" {
+				name = dirName
+			}
 			if name == "" {
-				name = ts.GID
+				name = "torrent:" + ts.GID[:12]
 			}
 			item := &DownloadItem{
 				GID:       ts.GID,
@@ -372,7 +393,7 @@ func (dm *DownloadManager) findMatching(tsGID, btName, dirName string, total int
 			}
 		}
 	}
-	if total > 100*1024 {
+	if total > 1024*1024 {
 		pending := 0
 		var last *DownloadItem
 		for _, d := range dm.items {
@@ -410,7 +431,7 @@ func (dm *DownloadManager) mapStatus(ariaStatus string, total, completed int64, 
 		return StatusWaiting
 	case "complete":
 		if completed > 0 && total > 0 && completed >= total {
-			if total > 100*1024 || prevTotal > 100*1024 {
+			if total > 1024*1024 || prevTotal > 1024*1024 {
 				return StatusCompleted
 			}
 			if prevStatus == StatusRunning || prevStatus == StatusCompleted || prevStatus == StatusSeeding {
