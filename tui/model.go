@@ -616,8 +616,10 @@ func (m *Model) metaPanel(width int, maxH int) string {
 			remaining := maxH - len(parts) - 1
 			if remaining > 0 {
 				parts = append(parts, "")
-				syn := Truncate(meta.Synopsis, width*remaining*2)
-				parts = append(parts, metaSynopsisStyle.Width(width-2).MaxHeight(remaining).Render(syn))
+				syn := strings.ReplaceAll(meta.Synopsis, "\n", " ")
+				syn = strings.ReplaceAll(syn, "\r", "")
+				syn = Truncate(syn, width*remaining*2)
+				parts = append(parts, metaSynopsisStyle.Width(width-4).MaxHeight(remaining).Render(syn))
 			}
 		}
 	}
