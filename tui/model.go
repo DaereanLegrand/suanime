@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -398,6 +399,12 @@ func (m *Model) View() string {
 		footer,
 	)
 
+	cl := 1 + strings.Count(content, "\n")
+	f, _ := os.OpenFile("/tmp/suanime-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	fmt.Fprintf(f, "w=%d m.h=%d contentLines=%d leftW=%d rightW=%d wrapW=%d paneH=%d imgH=%d\n",
+		m.width, m.height, cl, m.width/2, m.width-m.width/2-1, (m.width-m.width/2-1)-5, max(5, m.height-4), max(5, (m.height-5)/3))
+	f.Close()
+
 	return main
 }
 
@@ -624,6 +631,17 @@ func (m *Model) metaPanel(width int, maxH int) string {
 					wrapWidth = 10
 				}
 				wrapped := wrapText(syn, wrapWidth)
+				f, _ := os.OpenFile("/tmp/suanime-debug.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+				fmt.Fprintf(f, "  syn: width=%d wrapWidth=%d remaining=%d wrappedLines=%d\n",
+					width, wrapWidth, remaining, len(wrapped))
+				for i, ln := range wrapped {
+					show := ln
+					if len(show) > 80 {
+						show = show[:80] + "..."
+					}
+					fmt.Fprintf(f, "    [%d] len=%d: %q\n", i, len(ln), show)
+				}
+				f.Close()
 				if len(wrapped) > remaining {
 					wrapped = wrapped[:remaining]
 				}
