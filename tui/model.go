@@ -219,6 +219,7 @@ func (m *Model) handleSearchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		m.input.SetValue("")
 		m.cursor = 0
+		clearAllImages()
 		return m, nil
 
 	case "enter", "d":
@@ -452,9 +453,13 @@ func (m *Model) searchView() string {
 
 	leftW := m.width / 2
 	rightW := m.width - leftW - 1
+	paneH := m.height - 4
+	if paneH < 5 {
+		paneH = 5
+	}
 
-	left := m.resultsList(leftW)
-	right := m.metaPanel(rightW)
+	left := m.resultsList(leftW, paneH)
+	right := m.metaPanel(rightW, paneH)
 
 	divider := metaDivider
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, divider, right)
@@ -478,12 +483,12 @@ func (m *Model) centeredView(msg string) string {
 	)
 }
 
-func (m *Model) resultsList(width int) string {
+func (m *Model) resultsList(width int, maxH int) string {
 	var parts []string
 	parts = append(parts, accentStyle.Bold(true).Render("Results"))
 	parts = append(parts, mutedStyle.Render(fmt.Sprintf("  %-3s %-4s %-9s %s", "", "Ep", "Size", "Title")))
 
-	visible := max(3, m.height-12)
+	visible := maxH - 2
 	start := m.cursor - visible/2
 	if start < 0 {
 		start = 0
@@ -527,11 +532,14 @@ func (m *Model) resultsList(width int) string {
 			parts = append(parts, mutedStyle.Render(line))
 		}
 	}
+	for len(parts) < maxH {
+		parts = append(parts, "")
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
-func (m *Model) metaPanel(width int) string {
+func (m *Model) metaPanel(width int, maxH int) string {
 	var parts []string
 
 	if m.jikanFetching {
@@ -582,12 +590,19 @@ func (m *Model) metaPanel(width int) string {
 		}
 
 		if meta.Synopsis != "" {
-			parts = append(parts, "")
-			syn := Truncate(meta.Synopsis, width*6)
-			parts = append(parts, metaSynopsisStyle.Width(width-2).Render(syn))
+			remaining := maxH - len(parts) - 1
+			if remaining > 0 {
+				parts = append(parts, "")
+				syn := Truncate(meta.Synopsis, width*remaining*2)
+				parts = append(parts, metaSynopsisStyle.Width(width-2).MaxHeight(remaining).Render(syn))
+			}
 		}
 	}
 
 	content := lipgloss.JoinVertical(lipgloss.Left, parts...)
-	return metaPanelStyle.Width(width).Render(content)
+	lines := strings.Split(content, "\n")
+	for len(lines) < maxH {
+		lines = append(lines, "")
+	}
+	return metaPanelStyle.Width(width).Render(strings.Join(lines, "\n"))
 }
